@@ -9,7 +9,8 @@ under its key plus the label scaler's ``y_mean`` and ``y_sd``. The arrays go thr
 ``torch_port.port_state_dict``; the ported model predicts, in evaluation mode at matmul precision
 ``highest``, the ``test`` split of ``<store-root>/trainside`` (CASF) and every record of
 ``<store-root>/fep``, with capacities planned from each store's own records (as predict.py), and the
-predictions are de-standardised with the scaler.
+predictions are de-standardised with the scaler. Both stores must pass
+``store.require_verified``.
 
 Each set is compared with ``--reference-column`` of the PyTorch evaluator's CSV in
 ``--reference-dir`` (``predictions_test.csv``, ``predictions_fep.csv``): joined on ``unique_id``
@@ -41,7 +42,7 @@ import pandas as pd
 from aevplig_jax import inference
 from aevplig_jax.batching import StoreSource, prepare_all
 from aevplig_jax.loading import LoaderConfig
-from aevplig_jax.store import Store
+from aevplig_jax.store import Store, require_verified
 from aevplig_jax.torch_port import port_state_dict
 
 TOLERANCE = 1e-3  # pK, design acceptance 2
@@ -163,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
         sets = []
         for name, store_name, split, reference in SETS:  # prepare_all forks before JAX starts
             store = stack.enter_context(Store(args.store_root / store_name))
+            require_verified(store)
             ids = store.split_ids(split) if split else list(store.ids)
             if not ids:
                 raise ValueError(f"{store.path}: no records{f' in split {split}' if split else ''}")

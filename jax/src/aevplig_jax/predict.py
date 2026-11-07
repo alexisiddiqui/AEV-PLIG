@@ -2,7 +2,7 @@
 
     python -m aevplig_jax.predict --store DIR --checkpoints GLOB --manifest FILE --out CSV
         [--split NAME] [--precision default|highest] [--workers 15] [--prefetch 4]
-        [--prepare-workers 12]
+        [--prepare-workers 12] [--skip-verification]
 
 ``GLOB`` matches ``best`` checkpoint directories or their ``state.npz`` files; matches are sorted
 in natural order (seed-2 before seed-10) and member ``i`` is ``pred_i``. Batches are the store's
@@ -11,7 +11,8 @@ records, so a ligand larger than any training ligand still fits; the training ma
 gives the label scaler. Writes ``unique_id, subset, series, ref_pdb, truth, pred, pred_0, ...``
 (the paired tree's ``predictions_fep.csv`` layout): ``subset``, ``series`` and ``ref_pdb`` from
 the record meta (empty when absent), ``truth`` the store label (empty when absent), ``pred`` the
-member mean, all in label units.
+member mean, all in label units. The store must pass ``store.require_verified`` unless
+``--skip-verification`` opts out with a warning (synthetic stores, smoke runs).
 
 Imports jax, numpy, pandas, the standard library and package modules.
 """
@@ -32,7 +33,7 @@ import pandas as pd
 from aevplig_jax import inference
 from aevplig_jax.batching import StoreSource, prepare_all
 from aevplig_jax.loading import LoaderConfig
-from aevplig_jax.store import Store
+from aevplig_jax.store import Store, check_verified
 
 META_COLUMNS = ("subset", "series", "ref_pdb")
 
@@ -83,12 +84,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workers", type=int, default=15)
     parser.add_argument("--prefetch", type=int, default=4)
     parser.add_argument("--prepare-workers", type=int, default=12)
+    parser.add_argument("--skip-verification", action="store_true",
+                        help="use a store without a passing verification.json (synthetic stores "
+                             "and smoke runs only; prints a warning)")
     args = parser.parse_args(argv)
     inference.enable_compilation_cache()
-    manifest = json.loads(args.manifest.read_text())
-    files = checkpoint_files(args.checkpoints)
 
     with Store(args.store) as store:
+        check_verified(store, args.skip_verification)
+        manifest = json.loads(args.manifest.read_text())
+        files = checkpoint_files(args.checkpoints)
         ids = store.split_ids(args.split) if args.split else list(store.ids)
         if not ids:
             raise ValueError(f"{args.store}: no records{f' in split {args.split}' if args.split else ''}")

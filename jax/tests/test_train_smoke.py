@@ -41,9 +41,13 @@ def trainside(root: Path, seed: int = 0, nan_label: str | None = None) -> Path:
     return root
 
 
-def train_args(root: Path, out: Path, tag: str, epochs: int, *extra: str) -> list[str]:
+def train_args(root: Path, out: Path, tag: str, epochs: int, *extra: str,
+               verified: bool = False) -> list[str]:
+    """train.py arguments; synthetic stores carry no verification.json, so they opt out unless
+    ``verified``."""
+    skip = [] if verified else ["--skip-verification"]
     return ["--store-root", str(root), "--out", str(out), "--tag", tag, "--seed-index", "0",
-            "--epochs", str(epochs), "--limit", "40", *FAST, *extra]
+            "--epochs", str(epochs), "--limit", "40", *FAST, *skip, *extra]
 
 
 def history(seed_dir: Path) -> list[dict]:
@@ -109,6 +113,22 @@ def test_train_smoke_two_epochs(tmp_path):
     assert selection["epoch"] == saved[-1]
     assert selection["valid_pearson"] == pytest.approx(rows[saved[-1]]["valid_pearson"])
     assert selection["selection_mean"] == pytest.approx(rows[saved[-1]]["selection_mean"])
+
+
+def test_train_and_predict_refuse_unverified_stores(tmp_path, capsys):
+    root, out = trainside(tmp_path / "store"), tmp_path / "out"
+    with pytest.raises(RuntimeError, match="no verification.json"):
+        train.main(train_args(root, out, "unverified", 1, verified=True))
+    assert not (out / "unverified").exists()  # refused before anything is written
+    with pytest.raises(RuntimeError, match="no verification.json"):
+        predict.main(["--store", str(root / "trainside"), "--manifest", str(tmp_path / "m.json"),
+                      "--out", str(tmp_path / "p.csv"), "--checkpoints", str(tmp_path / "none"),
+                      *FAST])
+    capsys.readouterr()
+    assert train.main(train_args(root, out, "optout", 1)) == 0
+    assert "--skip-verification" in capsys.readouterr().err
+    protocol = json.loads((out / "optout" / "seed-0" / "protocol.json").read_text())
+    assert protocol["flags"]["skip_verification"] is True
 
 
 def test_selection_rule_window_of_eight():
@@ -206,7 +226,7 @@ def test_predict_plans_capacities_from_target_store(tmp_path):
     out_csv = tmp_path / "pred.csv"
     assert predict.main(["--store", str(target), "--manifest", str(manifest), "--out", str(out_csv),
                          "--checkpoints", str(tmp_path / "run" / "seed-*" / "checkpoints" / "best"),
-                         *FAST]) == 0
+                         "--skip-verification", *FAST]) == 0
     rows = read_csv(out_csv)
     assert rows[0] == ["unique_id", "subset", "series", "ref_pdb", "truth", "pred", "pred_0", "pred_1"]
     assert [r[0] for r in rows[1:]] == [r.id for r in records]

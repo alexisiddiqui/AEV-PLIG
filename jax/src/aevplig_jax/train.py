@@ -3,9 +3,12 @@
     python -m aevplig_jax.train --store-root DIR --tag T --seed-index I --epochs 200 --out DIR
         [--aev onthefly|precomputed --aev-table FILE] [--precision default|highest]
         [--workers 15] [--prefetch 4] [--prepare-workers 12] [--limit N] [--resume]
+        [--skip-verification]
 
 Data: ``<store-root>/trainside`` splits ``train`` (its first ``--limit`` ids when given), ``valid``
-and ``test``; labels are standardised with the mean and population sd of the training labels
+and ``test``; the store must pass ``store.require_verified`` (its ``verification.json`` vouches
+for every record of the files on disk) unless ``--skip-verification`` opts out with a warning
+(synthetic stores, smoke runs). Labels are standardised with the mean and population sd of the training labels
 (sklearn ``StandardScaler``). ``<out>/<tag>/manifest.json`` (capacities covering every seed's
 training plans and the valid/test prediction batches, the scaler, counts, store path, package
 hashes) is written by the first seed to start and reused by the others.
@@ -54,7 +57,7 @@ from aevplig_jax.constants import (AEV_DIM, BATCH, EPOCHS, LR, RDKIT_DIM, SEEDS,
                                    SELECTION_WINDOW)
 from aevplig_jax.loading import DeferredScalars, LoaderConfig, LoaderTelemetry, Prefetcher
 from aevplig_jax.precompute_aev import load_table
-from aevplig_jax.store import Store
+from aevplig_jax.store import Store, check_verified
 
 DATASET = "pdbbind_U_bindingnet_U_bindingdb_ligsim90_fep_benchmark"
 TRAIN_STORE = "trainside"
@@ -235,6 +238,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="processes preparing the records once at start-up")
     parser.add_argument("--limit", type=int, help="train on the first N training ids")
     parser.add_argument("--resume", action="store_true", help="continue from checkpoints/latest")
+    parser.add_argument("--skip-verification", action="store_true",
+                        help="use a store without a passing verification.json (synthetic stores "
+                             "and smoke runs only; prints a warning)")
     args = parser.parse_args(argv)
     if args.epochs < 1:
         parser.error("--epochs must be at least 1")
@@ -256,6 +262,7 @@ def run(args: argparse.Namespace) -> dict:
     inference.enable_compilation_cache()
 
     with Store(args.store_root / TRAIN_STORE) as store:
+        check_verified(store, args.skip_verification)
         ids = split_ids(store, args.limit)
         prepared = prepare_all(store, [rid for split in SPLITS for rid in ids[split]],
                                args.prepare_workers)  # forks: before JAX's backend starts

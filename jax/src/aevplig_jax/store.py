@@ -12,16 +12,22 @@ A store is a directory of four files:
 - ``metadata.json``: ``schema``, ``fields``, ``cutoff`` plus the builder's keys (pocket radius,
   species table, package versions).
 
+``verify_store.py`` adds ``verification.json`` with the store's ``store_fingerprint``
+(``store_fingerprint``: the size of ``records.bin`` and the sha256 of ``index.npz``);
+``require_verified`` is the gate training and prediction pass through before using a store.
+
 Imports numpy, zstandard, json and the standard library, plus package modules that use numpy and
 scipy only (``LigandArrays`` imports without RDKit).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import shutil
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +58,7 @@ FIELDS = (
 )
 _LEADING = {"lig": "L", "bond": "E", "prot": "P"}  # field-name prefix -> leading dimension
 STORE_FILES = ("records.bin", "index.npz", "records.json", "metadata.json")
+VERIFICATION = "verification.json"  # written by verify_store.py into the store directory
 
 
 @dataclass
@@ -268,6 +275,58 @@ class Store:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
+
+
+def store_fingerprint(path: Path) -> dict:
+    """``records_bin_bytes`` (size of ``records.bin``) and ``index_npz_sha256`` of the store at
+    ``path``: what ``verification.json`` records and ``require_verified`` checks against."""
+    path = Path(path)
+    return {"records_bin_bytes": (path / "records.bin").stat().st_size,
+            "index_npz_sha256": hashlib.sha256((path / "index.npz").read_bytes()).hexdigest()}
+
+
+def require_verified(store: Store) -> dict:
+    """The store's ``verification.json`` when it vouches for the files on disk, else
+    ``RuntimeError`` naming the store and every reason: the file is missing or unreadable,
+    ``passed`` is not true, ``counts.compared`` is not the number of records (a sampled or partial
+    verification), or the ``store_fingerprint`` is absent or differs from the files (the store was
+    rebuilt or changed after verification)."""
+    path = store.path / VERIFICATION
+    fix = "run verify_store.py on it (jobs/verify_store.sbatch)"
+    if not path.is_file():
+        raise RuntimeError(f"{store.path}: no {VERIFICATION}; {fix}")
+    try:
+        report = json.loads(path.read_text())
+    except ValueError as error:
+        raise RuntimeError(f"{store.path}: {VERIFICATION} is unreadable ({error}); {fix}") from None
+    reasons = []
+    if report.get("passed") is not True:
+        reasons.append(f"verification failed (passed: {report.get('passed')})")
+    compared = (report.get("counts") or {}).get("compared")
+    if compared != len(store.ids):
+        reasons.append(f"compared {compared} of {len(store.ids)} records")
+    recorded = report.get("store_fingerprint")
+    if not isinstance(recorded, dict):
+        reasons.append("no store_fingerprint (verified before fingerprints were recorded)")
+    else:
+        current = store_fingerprint(store.path)
+        if {key: recorded.get(key) for key in current} != current:
+            reasons.append(f"store_fingerprint {recorded} does not match the files on disk "
+                           f"{current} (changed after verification)")
+    if reasons:
+        raise RuntimeError(f"{store.path}: {VERIFICATION} does not vouch for this store: "
+                           f"{'; '.join(reasons)}; {fix}")
+    return report
+
+
+def check_verified(store: Store, skip: bool) -> dict | None:
+    """``require_verified(store)``, or with ``skip`` (the ``--skip-verification`` opt-out for
+    synthetic stores and smoke runs) a warning on stderr and None."""
+    if skip:
+        print(f"WARNING: --skip-verification: using {store.path} without checking its "
+              f"{VERIFICATION}", file=sys.stderr, flush=True)
+        return None
+    return require_verified(store)
 
 
 def merge_stores(parts: list[Path], out: Path) -> None:

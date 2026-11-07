@@ -73,7 +73,8 @@ for name in ("trainside", "fep", "pgdh"):
     r = json.loads(path.read_text())
     print(f"VERIFY {name}: passed {r['passed']}, counts {r['counts']}, worst {r['worst']}, "
           f"failures by source {r['failures_by_source']}, by check {r['failures_by_check']}, "
-          f"capacities {r['capacities']}, {r['seconds']} s on {r['device']}")
+          f"capacities {r['capacities']}, fingerprint {r.get('store_fingerprint')}, "
+          f"{r['seconds']} s on {r['device']}")
     for failure in r["failures"]:
         print(f"  FAILED {failure['id']} ({failure['source']}): {failure['checks']} aev {failure['aev_max_abs']}")
 PY

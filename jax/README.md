@@ -105,7 +105,11 @@ sbatch --export=ALL,SKIP_SEED=1 $J/profile_jax.sbatch   # profiles only; re-rend
 
 `train.sbatch` takes `TAG` (default `jax`), `EPOCHS` (default 200) and `PRECISION=highest` for strict
 float32 (default TF32); `--array=0` runs one seed. A seed directory that already holds
-`checkpoints/latest` is refused; continue it with `train.py --resume`.
+`checkpoints/latest` is refused; continue it with `train.py --resume`. `train.py`, `predict.py` and
+`port_parity.py` refuse a store whose `verification.json` is missing, failed, partial (fewer records
+compared than stored) or older than the store's files (its `store_fingerprint`: `records.bin` size and
+`index.npz` sha256); rerun `verify_store.sbatch` after any rebuild. `--skip-verification` (train and
+predict only) opts out with a warning, for synthetic stores and smoke runs.
 
 | Job | Env | Writes (under `$TREE/work`) | Time |
 |---|---|---|---|

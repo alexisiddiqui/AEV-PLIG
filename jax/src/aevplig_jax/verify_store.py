@@ -16,10 +16,11 @@ For every store id found in a pickle (or a seeded sample of them) the checks are
 
 The AEV function is jitted once on static capacities (ligand rows, neighbour slots, typed atoms:
 the store's largest ``L``, ``KA`` and ``A`` rounded up to a multiple of 32) and only the valid rows
-are compared. ``verification.json`` holds the counts, the worst AEV difference and ``passed``:
-every compared record passes, at least one record is compared and, with
-``--require-all-pickle-ids``, every pickled id is in the store. The exit code is 1 when ``passed``
-is false.
+are compared. ``verification.json`` holds the counts, the worst AEV difference, the
+``store_fingerprint`` of the files verified (``store.store_fingerprint``: size of ``records.bin``,
+sha256 of ``index.npz``; ``store.require_verified`` checks it) and ``passed``: every compared
+record passes, at least one record is compared and, with ``--require-all-pickle-ids``, every
+pickled id is in the store. The exit code is 1 when ``passed`` is false.
 
 Imports numpy, the standard library and the package's store and AEV modules (numpy, scipy,
 zstandard); pickles are read with ``pickle`` and numpy only, never torch, and jax is imported when
@@ -46,7 +47,7 @@ import numpy as np
 from aevplig_jax.aev import neighbour_lists, radial_aev_jax
 from aevplig_jax.constants import EDGE_DIM, NODE_DIM, RDKIT_DIM
 from aevplig_jax.pdb_atoms import typed_within
-from aevplig_jax.store import Record, Store
+from aevplig_jax.store import Record, Store, store_fingerprint
 
 AEV_TOLERANCE = 1e-4  # max abs difference of the AEV columns
 PAD = 32  # capacities are multiples of this
@@ -150,6 +151,7 @@ def verify(store_path: Path, pickles: list[Path], sample: int | None = None, see
           f"{load_seconds:.1f} s", flush=True)
 
     aev_fn = jax.jit(radial_aev_jax)
+    fingerprint = store_fingerprint(store_path)  # of the files this run reads
     with Store(store_path) as store:
         caps = capacities(store.dims)
         in_store = set(store.ids)
@@ -185,6 +187,7 @@ def verify(store_path: Path, pickles: list[Path], sample: int | None = None, see
         "sample": sample,
         "seed": seed,
         "require_all_pickle_ids": require_all_pickle_ids,
+        "store_fingerprint": fingerprint,
         "tolerance": AEV_TOLERANCE,
         "counts": {"store": n_store, "pickle": len(graphs), "compared": len(ids),
                    "passed": len(ids) - n_failed, "failed": n_failed,

@@ -6,6 +6,7 @@ then 352 AEV columns). Their AEV columns come from ``radial_aev_numpy`` over the
 the oracle shares neither the typed subset, the neighbour lists nor the JAX code under test.
 """
 
+import hashlib
 import json
 import os
 import pickle
@@ -20,7 +21,7 @@ from aevplig_jax.aev import radial_aev_numpy
 from aevplig_jax.constants import species_table
 from aevplig_jax.pdb_atoms import read_pocket
 from aevplig_jax.rdkit_features import ligand_arrays, read_ligand
-from aevplig_jax.store import STORE_FILES, Record, Store
+from aevplig_jax.store import STORE_FILES, Record, Store, require_verified
 from aevplig_jax.verify_store import main, select_ids
 from test_store import LIG_A, PROT_A, SPECIES_A, make_record, write_store
 
@@ -235,3 +236,69 @@ def test_verify_module_imports_no_torch_pandas_rdkit_or_jax():
     out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
                          check=True)
     assert out.stdout.strip() == "[]"
+
+
+def synthetic_store(tmp_path, rng) -> tuple[Path, Path]:
+    """A store of two synthetic records (no RDKit) and a pickle consistent with it."""
+    records = [make_record(rng, SYNTHETIC, LIG_A, PROT_A, SPECIES_A, n_bonds=4, source="pdbbind"),
+               make_record(rng, FAR, [[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]],
+                           [[0.0, 0.0, 7.0], [9.0, 0.0, 0.0]], [4, 9], n_bonds=0,
+                           source="bindingdb")]
+    store = write_store(tmp_path / "store", records)
+    return store, write_pickle(tmp_path / "graphs.pickle", {r.id: graph_of(r) for r in records})
+
+
+def test_verification_records_store_fingerprint(tmp_path, rng):
+    store, pickle_path = synthetic_store(tmp_path, rng)
+    code, report = run(store, [pickle_path])
+    assert code == 0 and report["passed"] is True
+    assert report["store_fingerprint"] == {
+        "records_bin_bytes": (store / "records.bin").stat().st_size,
+        "index_npz_sha256": hashlib.sha256((store / "index.npz").read_bytes()).hexdigest()}
+    with Store(store) as opened:
+        assert require_verified(opened) == report
+
+
+def _report(store: Path) -> dict:
+    return json.loads((store / "verification.json").read_text())
+
+
+def _rewrite(store: Path, report: dict) -> None:
+    (store / "verification.json").write_text(json.dumps(report))
+
+
+def test_require_verified_refuses_unvouched_stores(tmp_path, rng):
+    store, pickle_path = synthetic_store(tmp_path, rng)
+    with Store(store) as opened, pytest.raises(RuntimeError, match="no verification.json"):
+        require_verified(opened)
+
+    assert run(store, [pickle_path])[0] == 0
+    good = _report(store)
+
+    _rewrite(store, {**good, "passed": False})
+    with Store(store) as opened, pytest.raises(RuntimeError, match="verification failed"):
+        require_verified(opened)
+
+    # A sampled verification passes but leaves records unchecked.
+    code, sampled = run(store, [pickle_path], "--sample", "1")
+    assert code == 0 and sampled["passed"] is True
+    with Store(store) as opened, pytest.raises(RuntimeError, match="compared 1 of 2 records"):
+        require_verified(opened)
+
+    # A report from before fingerprints were recorded.
+    _rewrite(store, {key: value for key, value in good.items() if key != "store_fingerprint"})
+    with Store(store) as opened, pytest.raises(RuntimeError, match="no store_fingerprint"):
+        require_verified(opened)
+
+    # The index changed after verification (a rebuild in place): the fingerprint no longer matches.
+    _rewrite(store, good)
+    with Store(store) as opened:
+        require_verified(opened)
+    with np.load(store / "index.npz") as index:
+        arrays = {key: index[key] for key in index.files}
+    arrays["dims"] = arrays["dims"].copy()
+    arrays["dims"][0, 3] += 1
+    np.savez(store / "index.npz", **arrays)
+    with Store(store) as opened, pytest.raises(RuntimeError, match="does not match") as raised:
+        require_verified(opened)
+    assert str(store) in str(raised.value)
