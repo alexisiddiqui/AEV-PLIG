@@ -1,0 +1,634 @@
+{
+ "jax": {
+  "onthefly": {
+   "aev": "onthefly",
+   "seed_index": 0,
+   "warmup_steps": 5,
+   "steps": 300,
+   "trace_steps": 20,
+   "first_step_seconds": 0.966142445045989,
+   "step_seconds": {
+    "mean": 0.006118717374435315,
+    "p50": 0.006115994998253882,
+    "p95": 0.006208260150742717,
+    "min": 0.005870450986549258,
+    "max": 0.008094321005046368
+   },
+   "segment_seconds": 2.1240296909818426,
+   "valid_seconds": 0.04723492596531287,
+   "steps_per_epoch": 748,
+   "epochs": 200,
+   "seconds_per_epoch": 5.34314895548004,
+   "minutes_per_seed": 17.810496518266802,
+   "wait_fraction": 0.0006614331375944132,
+   "loader": {
+    "batches": 300,
+    "elapsed_seconds": 2.1241887590149418,
+    "startup_wait_seconds": 0.0198404070106335,
+    "steady_wait_seconds": 0.0014050088357180357,
+    "wait_fraction": 0.0006614331375944132,
+    "mean_assembly_seconds": 0.005224734858881371,
+    "max_wait_seconds": 5.824025720357895e-06,
+    "flag_input_bound": false
+   },
+   "window": [
+    1794093340.2284193,
+    1794093342.3526719
+   ],
+   "trace": {
+    "dir": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/profile/trace/onthefly",
+    "steps": 20,
+    "error": null,
+    "xla_flags": ""
+   },
+   "kernels": {
+    "source": "GPU kernel events of the perfetto trace (ph X on the device stream lines; dur in us), summed over the traced steps",
+    "trace": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/profile/trace/onthefly/plugins/profile/2026_11_07_23_15_42/perfetto_trace.json.gz",
+    "lines": [
+     "/device:GPU:0 Stream #14(Memset,Compute)",
+     "/device:GPU:0 Stream #15(MemcpyH2D)"
+    ],
+    "csv": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/profile/trace/onthefly/kernels.csv",
+    "events": 6960,
+    "steps": 20,
+    "window_ms": 151.11611200000002,
+    "kernel_ms": 99.811034,
+    "busy_ms": 98.28436399999904,
+    "busy_fraction": 0.6503897082794124,
+    "idle_ms": 52.831748000000985,
+    "per_step": {
+     "kernels": 348.0,
+     "window_ms": 7.555805600000001,
+     "kernel_ms": 4.9905517
+    },
+    "top": [
+     [
+      "input_add_transpose_fusion_4",
+      100,
+      10.250802000000004,
+      0.10270209203523534
+     ],
+     [
+      "loop_add_fusion_4",
+      100,
+      7.3415420000000005,
+      0.07355441283175165
+     ],
+     [
+      "input_scatter_fusion",
+      100,
+      5.612089000000003,
+      0.05622714017770823
+     ],
+     [
+      "gemm_fusion_dot_general_51",
+      20,
+      5.3063389999999995,
+      0.05316385160382167
+     ],
+     [
+      "fusion_472",
+      100,
+      5.098190000000001,
+      0.051078420848741035
+     ],
+     [
+      "sm90_xmma_gemm_f32f32_tf32f32_f32_nt_n_tilesize128x256x32_warpgroupsize2x1x1_execute_segment_k_off_kernel__5x_cublas",
+      80,
+      5.091205999999999,
+      0.05100844862502876
+     ],
+     [
+      "sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize64x128x32_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+      80,
+      4.547482999999998,
+      0.04556092465688712
+     ],
+     [
+      "loop_add_fusion_9",
+      120,
+      4.287045,
+      0.042951613946810734
+     ],
+     [
+      "input_transpose_fusion_5",
+      100,
+      4.204419000000002,
+      0.042123789640331775
+     ],
+     [
+      "gemm_fusion_dot_47",
+      100,
+      3.462235999999999,
+      0.034687908352898124
+     ],
+     [
+      "input_reduce_fusion_1",
+      100,
+      3.411737000000001,
+      0.03418196228685499
+     ],
+     [
+      "gemm_fusion_dot_21",
+      100,
+      3.2534089999999996,
+      0.03259568476166673
+     ],
+     [
+      "nvjet_sm90_sss_tf32_128x128_32x6_4x2_h_bz_TNT",
+      160,
+      3.220895999999997,
+      0.03226993921333384
+     ],
+     [
+      "input_reduce_fusion_19",
+      100,
+      2.873800000000001,
+      0.028792407861439457
+     ],
+     [
+      "input_reduce_fusion_8",
+      100,
+      2.861641,
+      0.028670587662682667
+     ]
+    ],
+    "families": [
+     [
+      "loop_add_fusion",
+      1540,
+      14.655216999999976,
+      0.14682962807498792
+     ],
+     [
+      "input_reduce_fusion",
+      1480,
+      12.207477999999998,
+      0.1223058965604945
+     ],
+     [
+      "input_add_transpose_fusion",
+      100,
+      10.250802000000004,
+      0.10270209203523534
+     ],
+     [
+      "gemm_fusion_dot",
+      380,
+      9.038873000000006,
+      0.0905598573400212
+     ],
+     [
+      "fusion",
+      340,
+      7.719741999999998,
+      0.07734357305626148
+     ],
+     [
+      "input_scatter_fusion",
+      180,
+      6.696119,
+      0.06708796344099592
+     ],
+     [
+      "gemm_fusion_dot_general",
+      20,
+      5.3063389999999995,
+      0.05316385160382167
+     ],
+     [
+      "sm90_xmma_gemm_f32f32_tf32f32_f32_nt_n_tilesize128x256x32_warpgroupsize2x1x1_execute_segment_k_off_kernel__5x_cublas",
+      80,
+      5.091205999999999,
+      0.05100844862502876
+     ],
+     [
+      "sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize64x128x32_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+      80,
+      4.547482999999998,
+      0.04556092465688712
+     ],
+     [
+      "input_transpose_fusion",
+      120,
+      4.351680000000003,
+      0.04359918764091757
+     ],
+     [
+      "nvjet_sm90_sss_tf32_128x128_32x6_4x2_h_bz_TNT",
+      160,
+      3.220895999999997,
+      0.03226993921333384
+     ],
+     [
+      "loop_multiply_fusion",
+      260,
+      2.7336120000000013,
+      0.027387873769547377
+     ],
+     [
+      "MemcpyH2D",
+      260,
+      2.3459780000000006,
+      0.023504194937004664
+     ],
+     [
+      "loop_compare_fusion",
+      20,
+      1.974244,
+      0.019779817129236436
+     ],
+     [
+      "input_add_reduce_fusion",
+      100,
+      1.9398840000000002,
+      0.019435566612805558
+     ]
+    ],
+    "modules": [
+     [
+      "jit_loss_and_grad",
+      5400,
+      94.41176600000043,
+      0.9459050990294362
+     ],
+     [
+      "jit_apply",
+      1300,
+      3.0532900000000063,
+      0.030590706033563446
+     ]
+    ]
+   },
+   "op_summary": {
+    "source": "op counts of the compiled HLO of loss_and_grad (no times: xprof is not installed)",
+    "rows": [
+     [
+      "fusion:kInput",
+      104
+     ],
+     [
+      "fusion:kLoop",
+      103
+     ],
+     [
+      "fusion:kCustom:__triton",
+      21
+     ],
+     [
+      "fusion:kCustom:__triton_nested_gemm_fusion",
+      20
+     ],
+     [
+      "custom-call:__cublas$lt$matmul",
+      18
+     ]
+    ]
+   },
+   "devices": [
+    "cuda:0"
+   ],
+   "versions": {
+    "jax": "0.11.2",
+    "numpy": "2.5.3",
+    "python": "3.12.15"
+   },
+   "padding": {
+    "node": 0.207445963541667,
+    "env": 0.24404203869047614,
+    "aev": 0.9887500486512115,
+    "gat": 0.6404560081845239,
+    "gat_fill": 0.45366162534047677
+   },
+   "capacities": {
+    "ncap": 5120,
+    "mcap": 14336,
+    "kb": 7,
+    "ka": 736,
+    "batch": 128
+   },
+   "manifest": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/timing/manifest.json"
+  },
+  "precomputed": {
+   "aev": "precomputed",
+   "seed_index": 0,
+   "warmup_steps": 5,
+   "steps": 300,
+   "trace_steps": 20,
+   "first_step_seconds": 0.9501842919853516,
+   "step_seconds": {
+    "mean": 0.005825740071789672,
+    "p50": 0.005797844001790509,
+    "p95": 0.006040404344093986,
+    "min": 0.005495998018886894,
+    "max": 0.006867701013106853
+   },
+   "segment_seconds": 2.0484235719777644,
+   "valid_seconds": 0.05371118197217584,
+   "steps_per_epoch": 748,
+   "epochs": 200,
+   "seconds_per_epoch": 5.161113954770069,
+   "minutes_per_seed": 17.203713182566897,
+   "wait_fraction": 0.0006768074108548921,
+   "loader": {
+    "batches": 300,
+    "elapsed_seconds": 2.048569103004411,
+    "startup_wait_seconds": 0.029102852975483984,
+    "steady_wait_seconds": 0.001386486750561744,
+    "wait_fraction": 0.0006768074108548921,
+    "mean_assembly_seconds": 0.006031424719258212,
+    "max_wait_seconds": 6.399990525096655e-06,
+    "flag_input_bound": false
+   },
+   "window": [
+    1794093356.2524252,
+    1794093358.301107
+   ],
+   "trace": {
+    "dir": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/profile/trace/precomputed",
+    "steps": 20,
+    "error": null,
+    "xla_flags": ""
+   },
+   "kernels": {
+    "source": "GPU kernel events of the perfetto trace (ph X on the device stream lines; dur in us), summed over the traced steps",
+    "trace": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/profile/trace/precomputed/plugins/profile/2026_11_07_23_15_58/perfetto_trace.json.gz",
+    "lines": [
+     "/device:GPU:0 Stream #14(Memset,Compute)",
+     "/device:GPU:0 Stream #15(MemcpyH2D)"
+    ],
+    "csv": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/profile/trace/precomputed/kernels.csv",
+    "events": 6860,
+    "steps": 20,
+    "window_ms": 148.00473,
+    "kernel_ms": 90.223863,
+    "busy_ms": 88.72323499999969,
+    "busy_fraction": 0.599462159080995,
+    "idle_ms": 59.281495000000284,
+    "per_step": {
+     "kernels": 343.0,
+     "window_ms": 7.4002365,
+     "kernel_ms": 4.5111931499999995
+    },
+    "top": [
+     [
+      "input_add_transpose_fusion_4",
+      100,
+      10.22104,
+      0.11328532896003357
+     ],
+     [
+      "loop_add_fusion_4",
+      100,
+      7.338027000000003,
+      0.08133133248794726
+     ],
+     [
+      "input_scatter_fusion",
+      100,
+      6.046601000000003,
+      0.06701775781868265
+     ],
+     [
+      "sm90_xmma_gemm_f32f32_tf32f32_f32_nt_n_tilesize128x256x32_warpgroupsize2x1x1_execute_segment_k_off_kernel__5x_cublas",
+      80,
+      5.120745,
+      0.05675599369980423
+     ],
+     [
+      "fusion_451",
+      100,
+      5.098117,
+      0.05650519530514893
+     ],
+     [
+      "sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize64x128x32_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+      80,
+      4.647704999999999,
+      0.05151303486085493
+     ],
+     [
+      "loop_add_fusion_9",
+      120,
+      4.321057999999999,
+      0.04789262902653591
+     ],
+     [
+      "gemm_fusion_dot_55",
+      100,
+      3.556502999999999,
+      0.039418651360560775
+     ],
+     [
+      "input_transpose_fusion_5",
+      100,
+      3.4198350000000004,
+      0.03790388580457922
+     ],
+     [
+      "input_reduce_fusion_1",
+      100,
+      3.3942020000000026,
+      0.03761978136538005
+     ],
+     [
+      "nvjet_sm90_sss_tf32_128x128_32x6_4x2_h_bz_TNT",
+      160,
+      3.301698999999998,
+      0.03659452045408428
+     ],
+     [
+      "gemm_fusion_dot_21",
+      100,
+      3.2652429999999995,
+      0.03619045883681571
+     ],
+     [
+      "input_reduce_fusion_19",
+      100,
+      2.870916999999998,
+      0.03181992994469765
+     ],
+     [
+      "input_reduce_fusion",
+      100,
+      2.863077999999999,
+      0.03173304605678433
+     ],
+     [
+      "MemcpyH2D",
+      260,
+      2.7516270000000014,
+      0.030497774186414535
+     ]
+    ],
+    "families": [
+     [
+      "loop_add_fusion",
+      1540,
+      14.682483999999999,
+      0.1627339321527388
+     ],
+     [
+      "input_reduce_fusion",
+      1480,
+      12.192495999999991,
+      0.1351360448842674
+     ],
+     [
+      "input_add_transpose_fusion",
+      100,
+      10.22104,
+      0.11328532896003357
+     ],
+     [
+      "gemm_fusion_dot",
+      380,
+      9.091523000000002,
+      0.10076627953737698
+     ],
+     [
+      "fusion",
+      340,
+      7.414746000000005,
+      0.08218165076793493
+     ],
+     [
+      "input_scatter_fusion",
+      180,
+      7.1455800000000025,
+      0.07919833802726893
+     ],
+     [
+      "sm90_xmma_gemm_f32f32_tf32f32_f32_nt_n_tilesize128x256x32_warpgroupsize2x1x1_execute_segment_k_off_kernel__5x_cublas",
+      80,
+      5.120745,
+      0.05675599369980423
+     ],
+     [
+      "sm90_xmma_gemm_f32f32_tf32f32_f32_nn_n_tilesize64x128x32_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+      80,
+      4.647704999999999,
+      0.05151303486085493
+     ],
+     [
+      "input_transpose_fusion",
+      120,
+      3.565465,
+      0.039517982066451754
+     ],
+     [
+      "nvjet_sm90_sss_tf32_128x128_32x6_4x2_h_bz_TNT",
+      160,
+      3.301698999999998,
+      0.03659452045408428
+     ],
+     [
+      "MemcpyH2D",
+      260,
+      2.7516270000000014,
+      0.030497774186414535
+     ],
+     [
+      "input_add_reduce_fusion",
+      100,
+      1.9416550000000001,
+      0.021520415280822106
+     ],
+     [
+      "input_multiply_reduce_fusion",
+      140,
+      1.694700999999999,
+      0.018783290181223995
+     ],
+     [
+      "void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_128x256_32x3_tt_align1>(cutlass_80_tensorop_s1688gemm_128x256_32x3_tt_align1::Params)",
+      20,
+      1.270937,
+      0.014086483971540876
+     ],
+     [
+      "loop_multiply_fusion",
+      240,
+      1.0376250000000002,
+      0.011500560555692459
+     ]
+    ],
+    "modules": [
+     [
+      "jit_loss_and_grad",
+      5300,
+      84.39789199999998,
+      0.9354276041140023
+     ],
+     [
+      "jit_apply",
+      1300,
+      3.0743440000000106,
+      0.03407462169958308
+     ]
+    ]
+   },
+   "op_summary": {
+    "source": "op counts of the compiled HLO of loss_and_grad (no times: xprof is not installed)",
+    "rows": [
+     [
+      "fusion:kInput",
+      103
+     ],
+     [
+      "fusion:kLoop",
+      100
+     ],
+     [
+      "fusion:kCustom:__triton",
+      21
+     ],
+     [
+      "fusion:kCustom:__triton_nested_gemm_fusion",
+      19
+     ],
+     [
+      "custom-call:__cublas$lt$matmul",
+      18
+     ]
+    ]
+   },
+   "devices": [
+    "cuda:0"
+   ],
+   "versions": {
+    "jax": "0.11.2",
+    "numpy": "2.5.3",
+    "python": "3.12.15"
+   },
+   "padding": {
+    "node": 0.207445963541667,
+    "env": 0.24404203869047614,
+    "aev": 0.9887500486512115,
+    "gat": 0.6404560081845239,
+    "gat_fill": 0.45366162534047677
+   },
+   "capacities": {
+    "ncap": 5120,
+    "mcap": 14336,
+    "kb": 7,
+    "ka": 736,
+    "batch": 128
+   },
+   "manifest": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/timing/manifest.json"
+  }
+ },
+ "seed": {
+  "run": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/timing/seed-0",
+  "window": [
+   1794087230.0,
+   1794088061.0
+  ],
+  "wall_seconds": 831.0,
+  "epochs": 200,
+  "train_seconds": 790.9312101119431,
+  "valid_seconds": 9.390354041592218,
+  "wait_fraction": 0.0007320630728380883
+ }
+}

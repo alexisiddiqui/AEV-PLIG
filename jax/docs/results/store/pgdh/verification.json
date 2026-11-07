@@ -1,0 +1,41 @@
+{
+ "store": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/store/pgdh",
+ "pickles": [
+  "/scratch/u6xq/hussain.u6xq/aevplig-paired/work/data/pgdh_graphs.pickle"
+ ],
+ "sample": null,
+ "seed": 0,
+ "require_all_pickle_ids": false,
+ "store_fingerprint": {
+  "records_bin_bytes": 300927,
+  "index_npz_sha256": "31a1e93f5775afb1d0a2f835292284cf1dca1229b4d9d3985ca113b36fa2fc92"
+ },
+ "tolerance": 0.0001,
+ "counts": {
+  "store": 43,
+  "pickle": 43,
+  "compared": 43,
+  "passed": 43,
+  "failed": 0,
+  "missing_in_pickle": 0,
+  "missing_in_store": 0
+ },
+ "worst": {
+  "id": "pgdh/S4/compound_46",
+  "aev_max_abs": 6.572907472746081e-07
+ },
+ "failures_by_source": {},
+ "failures_by_check": {},
+ "failures": [],
+ "missing_in_pickle_ids": [],
+ "missing_in_store_ids": [],
+ "capacities": {
+  "L": 64,
+  "K": 64,
+  "A": 128
+ },
+ "device": "cuda:0",
+ "load_seconds": 0.0,
+ "seconds": 0.9,
+ "passed": true
+}

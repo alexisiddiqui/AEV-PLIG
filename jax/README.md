@@ -8,10 +8,10 @@ Results: `docs/REPORT_reproduction.md`.
 
 ## Results
 
-- Store: 97,857 training-side, 1,184 FEP and 43 15-PGDH complexes; on-the-fly AEVs match the pickled features to 2.34e-5 on every record.
+- Store: 97,857 training-side, 1,184 FEP and 43 15-PGDH complexes; on-the-fly AEVs match the pickled features to 2.34e-5 on every record. Schema 2 adds each pocket atom's element and raw chain, resSeq and insertion code; training, prediction and the parity check refuse a store whose verification is missing, failed, partial or stale.
 - Weight port: the parent's PyTorch seed 0 run in JAX matches its PyTorch predictions to 3.08e-5 pK (CASF and FEP).
 - Ten seeds, strict float32: CASF 0.8921 / 1.043, FEP weighted PCC 0.5833, Kendall 0.4150 (design targets 0.892 / 1.041, 0.589 / 0.429), 22 min per seed. TF32: 0.8874 / 1.056, 0.5659 / 0.4013 (FEP outside the band), 14 min per seed.
-- Speed: 4.1x the PyTorch loop (13.8 vs 57.0 min per seed) in TF32, 2.6x in float32; the 10-min target is missed because a step is about 270 small kernels, not because of the loader (0.1% wait) or the AEV (under 7%).
+- Speed: 4.1x the PyTorch loop (13.8 vs 57.0 min per seed) in TF32, 2.6x in float32; the 10-min target is missed because the step is GPU-bound (kernels busy about 93% of it): mostly memory-bound fusions in the GAT layers, whose neighbour slots are 64% padding, with matrix multiplies about 29%. Launch gaps (about 7%), the loader (0.1% wait) and the AEV (4-7%) are not the limit.
 
 ## Layout
 
@@ -104,6 +104,13 @@ sbatch $J/profile_jax.sbatch                        # profiles, then one timed s
 sbatch --export=ALL,SKIP_SEED=1 $J/profile_jax.sbatch   # profiles only; re-renders REPORT.md
 ```
 
+`build_store.sbatch` refuses existing stores: move them aside before a rebuild (stores older than schema 2
+are refused by `Store`), then rerun `verify_store.sbatch`. `python -m aevplig_jax.store_census --store DIR`
+prints a store's species-0 census (untyped pocket atoms per source by element and atom-name code); the
+verify job runs it on trainside. Every `profile_jax.sbatch` run, `SKIP_SEED=1` included, summarises its
+traces per kernel into `profile.json`, `REPORT.md` and `trace/<mode>/kernels.csv`;
+`python -m aevplig_jax.profile --trace-summary TRACE_DIR --out DIR` does it for an existing trace.
+
 `train.sbatch` takes `TAG` (default `jax`), `EPOCHS` (default 200) and `PRECISION=highest` for strict
 float32 (default TF32); `--array=0` runs one seed. A seed directory that already holds
 `checkpoints/latest` is refused; continue it with `train.py --resume`. `train.py`, `predict.py` and
@@ -118,10 +125,10 @@ predict only) opts out with a warning, for synthetic stores and smoke runs.
 | `verify_store.sbatch` | jax-Ka | `store/{trainside,fep,pgdh}/verification.json`; the trainside species-0 census in the log and `store/logs/aj-census-<job>-trainside.json` | 2 min |
 | `selftest.sbatch` | jax-Ka | pytest on the CPU, then a 2-epoch GPU smoke in `output/selftest/` | 1 min |
 | `train.sbatch` | jax-Ka | `output/$TAG/manifest.json`; `output/$TAG/seed-<i>/{protocol.json, history.jsonl, selection.json, test_predictions.csv, checkpoints/{best,latest}/state.npz}`; `output/predictions/${TAG}_..._test_seed<i>.csv` | 14 min per seed TF32, 22 min float32 |
-| `eval.sbatch` | jax-Ka | `output/eval/$TAG/`: `predictions_{test,fep,pgdh}.csv`, `casf_summary.csv`, `fep_summary.csv`, `fep_per_series.csv`, `pgdh_summary.csv`, `SUMMARY.md` | 35 s |
+| `eval.sbatch` | jax-Ka | predictions at the tag's training precision; `output/eval/$TAG/`: `predictions_{test,fep,pgdh}.csv`, `casf_summary.csv`, `fep_summary.csv`, `fep_per_series.csv`, `pgdh_summary.csv`, `SUMMARY.md` | 35 s |
 | `port_parity.sbatch` | both | `output/parity/`: `torch_seed0.npz`, `parity.csv`, `parity_rows.csv`, `REPORT.md` | |
 | `profile_torch.sbatch` | AEV-PLIG | `output/profile/torch/`: `profile_torch.json`, `key_averages.txt`, `gpu_util.txt` | |
-| `profile_jax.sbatch` | jax-Ka | `output/profile/`: `profile.json`, `REPORT.md`, `gpu_util.txt`, `trace/`; `output/aev_trainside.npz`; the timing seed in `output/timing/` | profiles plus a 14-min seed |
+| `profile_jax.sbatch` | jax-Ka | `output/profile/`: `profile.json`, `REPORT.md`, `gpu_util.txt`, `trace/` (with `<mode>/kernels.csv`); `output/aev_trainside.npz`; the timing seed in `output/timing/` | profiles plus a 14-min seed |
 
 Logs: `store/logs/` for the store jobs, `output/logs/` for the rest. A seed's `best` checkpoint is
 30 MB and `latest` 91 MB.

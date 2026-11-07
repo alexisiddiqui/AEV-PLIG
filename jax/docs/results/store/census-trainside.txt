@@ -1,0 +1,15 @@
+[census] /scratch/u6xq/hussain.u6xq/aevplig-jax/work/store/trainside: species-0 pocket atoms by element and atom code
+pdbbind: 19308 records, 7532837 pocket atoms, 0 species 0 (0.00%)
+bindingnet: 69727 records, 38251163 pocket atoms, 9616283 species 0 (25.14%)
+bindingdb: 8822 records, 3527445 pocket atoms, 2410 species 0 (0.07%)
+
+| source | element | atom -1 | atom known | species 0 |
+| --- | --- | --- | --- | --- |
+| bindingnet | C | 0 | 72335 | 72335 |
+| bindingnet | N | 0 | 36161 | 36161 |
+| bindingnet | O | 0 | 11784 | 11784 |
+| bindingnet | S | 0 | 58 | 58 |
+| bindingnet | H | 9495945 | 0 | 9495945 |
+| bindingdb | C | 505 | 0 | 505 |
+| bindingdb | N | 247 | 0 | 247 |
+| bindingdb | O | 248 | 0 | 248 |

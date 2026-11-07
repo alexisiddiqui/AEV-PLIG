@@ -1,0 +1,346 @@
+{
+ "schema": 2,
+ "fields": [
+  {
+   "name": "lig_xyz",
+   "dtype": "<f4",
+   "shape": [
+    "L",
+    3
+   ]
+  },
+  {
+   "name": "lig_feat",
+   "dtype": "<f4",
+   "shape": [
+    "L",
+    15
+   ]
+  },
+  {
+   "name": "bond_src",
+   "dtype": "<i4",
+   "shape": [
+    "E"
+   ]
+  },
+  {
+   "name": "bond_dst",
+   "dtype": "<i4",
+   "shape": [
+    "E"
+   ]
+  },
+  {
+   "name": "bond_type",
+   "dtype": "<f4",
+   "shape": [
+    "E",
+    4
+   ]
+  },
+  {
+   "name": "prot_xyz",
+   "dtype": "<f4",
+   "shape": [
+    "P",
+    3
+   ]
+  },
+  {
+   "name": "prot_species",
+   "dtype": "|i1",
+   "shape": [
+    "P"
+   ]
+  },
+  {
+   "name": "prot_res",
+   "dtype": "<i4",
+   "shape": [
+    "P"
+   ]
+  },
+  {
+   "name": "prot_resname",
+   "dtype": "|i1",
+   "shape": [
+    "P"
+   ]
+  },
+  {
+   "name": "prot_atom",
+   "dtype": "<i2",
+   "shape": [
+    "P"
+   ]
+  },
+  {
+   "name": "prot_chain",
+   "dtype": "|i1",
+   "shape": [
+    "P"
+   ]
+  },
+  {
+   "name": "prot_bfactor",
+   "dtype": "<f2",
+   "shape": [
+    "P"
+   ]
+  },
+  {
+   "name": "prot_element",
+   "dtype": "|i1",
+   "shape": [
+    "P"
+   ]
+  },
+  {
+   "name": "prot_chain_id",
+   "dtype": "|i1",
+   "shape": [
+    "P"
+   ]
+  },
+  {
+   "name": "prot_resseq",
+   "dtype": "<i4",
+   "shape": [
+    "P"
+   ]
+  },
+  {
+   "name": "prot_icode",
+   "dtype": "|i1",
+   "shape": [
+    "P"
+   ]
+  }
+ ],
+ "cutoff": 5.1,
+ "elements": [
+  "other",
+  "C",
+  "N",
+  "O",
+  "S",
+  "P",
+  "H",
+  "SE",
+  "F",
+  "CL",
+  "BR",
+  "I",
+  "NA",
+  "K",
+  "MG",
+  "CA",
+  "MN",
+  "FE",
+  "CO",
+  "NI",
+  "CU",
+  "ZN",
+  "CD",
+  "HG"
+ ],
+ "pocket_radius": 10.0,
+ "species": {
+  "ALA-C": 1,
+  "ALA-CA": 2,
+  "ALA-CB": 3,
+  "ALA-N": 4,
+  "ALA-O": 5,
+  "ALA-OXT": 5,
+  "ARG-C": 1,
+  "ARG-CA": 2,
+  "ARG-CB": 6,
+  "ARG-CD": 6,
+  "ARG-CG": 6,
+  "ARG-CZ": 7,
+  "ARG-N": 4,
+  "ARG-NE": 8,
+  "ARG-NH1": 9,
+  "ARG-NH2": 9,
+  "ARG-O": 5,
+  "ARG-OXT": 5,
+  "ASN-C": 1,
+  "ASN-CA": 2,
+  "ASN-CB": 6,
+  "ASN-CG": 1,
+  "ASN-N": 4,
+  "ASN-ND2": 10,
+  "ASN-O": 5,
+  "ASN-OD1": 5,
+  "ASN-OXT": 5,
+  "ASP-C": 1,
+  "ASP-CA": 2,
+  "ASP-CB": 6,
+  "ASP-CG": 11,
+  "ASP-N": 4,
+  "ASP-O": 5,
+  "ASP-OD1": 5,
+  "ASP-OD2": 5,
+  "ASP-OXT": 5,
+  "CYS-C": 1,
+  "CYS-CA": 2,
+  "CYS-CB": 6,
+  "CYS-N": 4,
+  "CYS-O": 5,
+  "CYS-OXT": 5,
+  "CYS-SG": 12,
+  "GLN-C": 1,
+  "GLN-CA": 2,
+  "GLN-CB": 6,
+  "GLN-CD": 1,
+  "GLN-CG": 6,
+  "GLN-N": 4,
+  "GLN-NE2": 10,
+  "GLN-O": 5,
+  "GLN-OE1": 5,
+  "GLN-OXT": 5,
+  "GLU-C": 1,
+  "GLU-CA": 2,
+  "GLU-CB": 6,
+  "GLU-CD": 11,
+  "GLU-CG": 6,
+  "GLU-N": 4,
+  "GLU-O": 5,
+  "GLU-OE1": 5,
+  "GLU-OE2": 5,
+  "GLU-OXT": 5,
+  "GLY-C": 1,
+  "GLY-CA": 6,
+  "GLY-N": 4,
+  "GLY-O": 5,
+  "GLY-OXT": 5,
+  "HIS-C": 1,
+  "HIS-CA": 2,
+  "HIS-CB": 6,
+  "HIS-CD2": 13,
+  "HIS-CE1": 13,
+  "HIS-CG": 14,
+  "HIS-N": 4,
+  "HIS-ND1": 15,
+  "HIS-NE2": 16,
+  "HIS-O": 5,
+  "HIS-OXT": 5,
+  "ILE-C": 1,
+  "ILE-CA": 2,
+  "ILE-CB": 2,
+  "ILE-CD1": 3,
+  "ILE-CG1": 6,
+  "ILE-CG2": 3,
+  "ILE-N": 4,
+  "ILE-O": 5,
+  "ILE-OXT": 5,
+  "LEU-C": 1,
+  "LEU-CA": 2,
+  "LEU-CB": 6,
+  "LEU-CD1": 3,
+  "LEU-CD2": 3,
+  "LEU-CG": 2,
+  "LEU-N": 4,
+  "LEU-O": 5,
+  "LEU-OXT": 5,
+  "LYS-C": 1,
+  "LYS-CA": 2,
+  "LYS-CB": 6,
+  "LYS-CD": 6,
+  "LYS-CE": 6,
+  "LYS-CG": 6,
+  "LYS-N": 4,
+  "LYS-NZ": 17,
+  "LYS-O": 5,
+  "LYS-OXT": 5,
+  "MET-C": 1,
+  "MET-CA": 2,
+  "MET-CB": 6,
+  "MET-CE": 3,
+  "MET-CG": 6,
+  "MET-N": 4,
+  "MET-O": 5,
+  "MET-OXT": 5,
+  "MET-SD": 18,
+  "PHE-C": 1,
+  "PHE-CA": 2,
+  "PHE-CB": 6,
+  "PHE-CD1": 13,
+  "PHE-CD2": 13,
+  "PHE-CE1": 13,
+  "PHE-CE2": 13,
+  "PHE-CG": 14,
+  "PHE-CZ": 13,
+  "PHE-N": 4,
+  "PHE-O": 5,
+  "PHE-OXT": 5,
+  "PRO-C": 1,
+  "PRO-CA": 19,
+  "PRO-CB": 20,
+  "PRO-CD": 20,
+  "PRO-CG": 20,
+  "PRO-N": 21,
+  "PRO-O": 5,
+  "PRO-OXT": 5,
+  "SER-C": 1,
+  "SER-CA": 2,
+  "SER-CB": 6,
+  "SER-N": 4,
+  "SER-O": 5,
+  "SER-OG": 22,
+  "SER-OXT": 5,
+  "THR-C": 1,
+  "THR-CA": 2,
+  "THR-CB": 2,
+  "THR-CG2": 3,
+  "THR-N": 4,
+  "THR-O": 5,
+  "THR-OG1": 22,
+  "THR-OXT": 5,
+  "TRP-C": 1,
+  "TRP-CA": 2,
+  "TRP-CB": 6,
+  "TRP-CD1": 13,
+  "TRP-CD2": 14,
+  "TRP-CE2": 14,
+  "TRP-CE3": 13,
+  "TRP-CG": 14,
+  "TRP-CH2": 13,
+  "TRP-CZ2": 13,
+  "TRP-CZ3": 13,
+  "TRP-N": 4,
+  "TRP-NE1": 16,
+  "TRP-O": 5,
+  "TRP-OXT": 5,
+  "TYR-C": 1,
+  "TYR-CA": 2,
+  "TYR-CB": 6,
+  "TYR-CD1": 13,
+  "TYR-CD2": 13,
+  "TYR-CE1": 13,
+  "TYR-CE2": 13,
+  "TYR-CG": 14,
+  "TYR-CZ": 14,
+  "TYR-N": 4,
+  "TYR-O": 5,
+  "TYR-OH": 22,
+  "TYR-OXT": 5,
+  "VAL-C": 1,
+  "VAL-CA": 2,
+  "VAL-CB": 2,
+  "VAL-CG1": 3,
+  "VAL-CG2": 3,
+  "VAL-N": 4,
+  "VAL-O": 5,
+  "VAL-OXT": 5
+ },
+ "versions": {
+  "python": "3.11.17",
+  "numpy": "1.26.4",
+  "pandas": "2.0.3",
+  "rdkit": "2024.03.3",
+  "scipy": "1.10.1",
+  "zstandard": "0.25.0"
+ }
+}

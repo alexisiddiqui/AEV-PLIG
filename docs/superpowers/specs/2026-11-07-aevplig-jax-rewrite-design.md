@@ -84,6 +84,8 @@ Conventions (from jax-Ka, see `REPORT_jaxka_recipe.md` in the scratchpad and `pk
 5. Tests: a CPU pytest suite under `jax/tests` covering the AEV against a numpy reference on random point sets, the GATv2 layer against PyG, masked BatchNorm against torch on padded input, pooling and loss masking (padding changes nothing), store round-trip and capacities, the sampler following PyTorch's scheme (one permutation of all ids per epoch, chunks of 128, deterministic in seed and epoch), and `torch_port` on a saved model. All green locally in the paired venv (torch available) and in the jax-Ka venv (torch tests skipped).
 6. Documentation: `jax/README.md` (layout, commands, environments, timings), `jax/docs/REPORT_reproduction.md` (parity, 10-seed numbers, profile table), the design committed at this path, and the memory note updated with paths, versions and results.
 
+2026-11-07, after the fix wave: the verdict on each item is in `jax/docs/REPORT_reproduction.md` (the acceptance list under "Ten-seed reproduction"), including how the per-seed validation clause was read and the measured profile (a GPU-bound step, not a launch-bound one); this section stays as the record of intent.
+
 ## 9. Left to the builder
 
 - Exact replication of `LoadPDBasDF` filtering (altlocs, HETATM, waters, hydrogens, unmapped atom names) and of the ligand reading path (`SDMolSupplier(removeHs=False)`, heavy-atom selection, bond sorting); the parity gate decides.

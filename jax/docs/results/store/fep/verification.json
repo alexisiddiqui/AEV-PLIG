@@ -1,0 +1,41 @@
+{
+ "store": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/store/fep",
+ "pickles": [
+  "/scratch/u6xq/hussain.u6xq/aevplig-paired/work/data/fep_benchmark_graphs.pickle"
+ ],
+ "sample": null,
+ "seed": 0,
+ "require_all_pickle_ids": false,
+ "store_fingerprint": {
+  "records_bin_bytes": 7974653,
+  "index_npz_sha256": "1fd460f80246e45bb369fa9c2ef83f33774bfeff24e163afdba93a0b832e76dd"
+ },
+ "tolerance": 0.0001,
+ "counts": {
+  "store": 1184,
+  "pickle": 1184,
+  "compared": 1184,
+  "passed": 1184,
+  "failed": 0,
+  "missing_in_pickle": 0,
+  "missing_in_store": 0
+ },
+ "worst": {
+  "id": "merck/pfkfb3_automap/47",
+  "aev_max_abs": 8.223627777290132e-06
+ },
+ "failures_by_source": {},
+ "failures_by_check": {},
+ "failures": [],
+ "missing_in_pickle_ids": [],
+ "missing_in_store_ids": [],
+ "capacities": {
+  "L": 64,
+  "K": 32,
+  "A": 160
+ },
+ "device": "cuda:0",
+ "load_seconds": 0.2,
+ "seconds": 2.0,
+ "passed": true
+}
