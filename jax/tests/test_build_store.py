@@ -3,7 +3,7 @@ failures, workers.
 
 Structure files are the benzamide fixtures (mol2 for PDBbind and BindingDB, sdf for BindingNet and
 generic CSVs) and ``pocket.pdb``, placed under the archive layout the generate scripts expect.
-Benzamide against ``pocket.pdb``: L = 9, E = 18, P = 41 within 10 A, A = 24, KA = 16.
+Benzamide against ``pocket.pdb``: L = 9, E = 18, P = 42 within 10 A, A = 24, KA = 16.
 """
 
 import json
@@ -25,7 +25,7 @@ from aevplig_jax.store import Store, merge_stores
 DATA = Path(__file__).resolve().parent / "data"
 SDF, MOL2, POCKET = DATA / "benzamide.sdf", DATA / "benzamide.mol2", DATA / "pocket.pdb"
 KEYS_CSV = Path(__file__).resolve().parents[2] / "data" / "PDB_Atom_Keys.csv"
-BENZAMIDE_DIMS = [9, 18, 41, 24, 16]
+BENZAMIDE_DIMS = [9, 18, 42, 24, 16]
 
 # Rows of the three processed CSVs (columns as in data/*_processed.csv, written with an index column).
 PDBBIND = pd.DataFrame({
@@ -217,7 +217,8 @@ def test_build_generic_csv(tmp_path, species):
         assert record.meta == {"sdf_file": str(SDF), "pdb_file": str(POCKET), "series": "s1"}
         for name in ("xyz", "feat", "bond_src", "bond_dst", "bond_type"):
             np.testing.assert_array_equal(getattr(record.lig, name), getattr(lig, name), err_msg=name)
-        for name in ("xyz", "species", "res", "resname", "atom", "chain", "bfactor"):
+        for name in ("xyz", "species", "res", "resname", "atom", "chain", "bfactor", "element",
+                     "chain_id", "resseq", "icode"):
             np.testing.assert_array_equal(getattr(record.pocket, name), getattr(pocket, name),
                                           err_msg=name)
         assert store.metadata["pocket_radius"] == 10.0

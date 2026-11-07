@@ -50,6 +50,8 @@ def directed_record(rng, rid, n_lig, n_edges, n_prot=150) -> Record:
         species=rng.integers(0, 23, n_prot).astype(np.int8), res=np.zeros(n_prot, np.int32),
         resname=np.zeros(n_prot, np.int8), atom=np.zeros(n_prot, np.int16),
         chain=np.zeros(n_prot, np.int8), bfactor=np.zeros(n_prot, np.float16),
+        element=np.zeros(n_prot, np.int8), chain_id=np.zeros(n_prot, np.int8),
+        resseq=np.zeros(n_prot, np.int32), icode=np.zeros(n_prot, np.int8),
     )
     return Record(id=rid, lig=lig, pocket=pocket, label=6.0, source="synthetic", split="train")
 

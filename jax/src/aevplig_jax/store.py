@@ -2,15 +2,18 @@
 
 A store is a directory of four files:
 
-- ``records.bin``: one zstd frame (level 3) per record, holding the twelve ``FIELDS`` arrays'
+- ``records.bin``: one zstd frame (level 3) per record, holding the sixteen ``FIELDS`` arrays'
   C-order bytes concatenated in ``FIELDS`` order. Leading dimensions are ``L`` (ligand heavy atoms)
   for ``lig_*``, ``E`` (directed bonds) for ``bond_*`` and ``P`` (pocket atoms) for ``prot_*``.
+  Schema 2 appended ``prot_element`` (code into ``metadata.json``'s ``elements``),
+  ``prot_chain_id``, ``prot_resseq`` and ``prot_icode`` (the raw residue id) after schema 1's
+  twelve fields, which are unchanged.
 - ``index.npz``: ``ids`` (N,) str, ``offset`` and ``length`` (N,) int64 into ``records.bin``,
   ``dims`` (N, 5) int32 = ``[L, E, P, A, KA]``; ``A`` = typed pocket atoms within ``RC`` of any
   ligand atom (``typed_within``), ``KA`` = the most of those within ``RC`` of one ligand atom.
 - ``records.json``: id -> ``{source, split, label, meta}`` in store order (NaN labels as null).
-- ``metadata.json``: ``schema``, ``fields``, ``cutoff`` plus the builder's keys (pocket radius,
-  species table, package versions).
+- ``metadata.json``: ``schema``, ``fields``, ``cutoff``, ``elements`` (the ``prot_element``
+  table) plus the builder's keys (pocket radius, species table, package versions).
 
 ``verify_store.py`` adds ``verification.json`` with the store's ``store_fingerprint``
 (``store_fingerprint``: the size of ``records.bin`` and the sha256 of ``index.npz``);
@@ -37,10 +40,10 @@ import zstandard
 
 from aevplig_jax.aev import neighbour_lists
 from aevplig_jax.constants import EDGE_DIM, RC, RDKIT_DIM
-from aevplig_jax.pdb_atoms import PocketArrays, typed_within
+from aevplig_jax.pdb_atoms import ELEMENTS, PocketArrays, typed_within
 from aevplig_jax.rdkit_features import LigandArrays
 
-SCHEMA = 1
+SCHEMA = 2  # 2: prot_element, prot_chain_id, prot_resseq, prot_icode appended
 ZSTD_LEVEL = 3
 FIELDS = (
     ("lig_xyz", "float32", (3,)),
@@ -55,6 +58,10 @@ FIELDS = (
     ("prot_atom", "int16", ()),
     ("prot_chain", "int8", ()),
     ("prot_bfactor", "float16", ()),
+    ("prot_element", "int8", ()),
+    ("prot_chain_id", "int8", ()),
+    ("prot_resseq", "int32", ()),
+    ("prot_icode", "int8", ()),
 )
 _LEADING = {"lig": "L", "bond": "E", "prot": "P"}  # field-name prefix -> leading dimension
 STORE_FILES = ("records.bin", "index.npz", "records.json", "metadata.json")
@@ -81,7 +88,8 @@ def _field_arrays(record: Record) -> dict[str, np.ndarray]:
         "bond_dst": lig.bond_dst, "bond_type": lig.bond_type,
         "prot_xyz": pocket.xyz, "prot_species": pocket.species, "prot_res": pocket.res,
         "prot_resname": pocket.resname, "prot_atom": pocket.atom, "prot_chain": pocket.chain,
-        "prot_bfactor": pocket.bfactor,
+        "prot_bfactor": pocket.bfactor, "prot_element": pocket.element,
+        "prot_chain_id": pocket.chain_id, "prot_resseq": pocket.resseq, "prot_icode": pocket.icode,
     }
 
 
@@ -132,7 +140,9 @@ def _decode(payload: bytes, dims: np.ndarray, rid: str) -> tuple[LigandArrays, P
     pocket = PocketArrays(xyz=arrays["prot_xyz"], species=arrays["prot_species"],
                           res=arrays["prot_res"], resname=arrays["prot_resname"],
                           atom=arrays["prot_atom"], chain=arrays["prot_chain"],
-                          bfactor=arrays["prot_bfactor"])
+                          bfactor=arrays["prot_bfactor"], element=arrays["prot_element"],
+                          chain_id=arrays["prot_chain_id"], resseq=arrays["prot_resseq"],
+                          icode=arrays["prot_icode"])
     return lig, pocket
 
 
@@ -166,17 +176,19 @@ class StoreWriter:
     """Appends records to a new store at ``path``; ``close`` writes the index and JSON files.
 
     ``metadata`` holds the builder's keys (``pocket_radius``, ``species``, ``versions``); the writer
-    adds ``schema``, ``fields`` and ``cutoff``. Refuses a directory that already holds a store.
+    adds ``schema``, ``fields``, ``cutoff`` and ``elements``. Refuses a directory that already holds
+    a store.
     """
 
     def __init__(self, path: Path, metadata: dict):
         self.path = Path(path)
-        reserved = {"schema", "fields", "cutoff"} & set(metadata)
+        reserved = {"schema", "fields", "cutoff", "elements"} & set(metadata)
         if reserved:
             raise ValueError(f"metadata keys {sorted(reserved)} are set by the writer")
         self.path.mkdir(parents=True, exist_ok=True)
         _refuse_existing(self.path)
-        self._metadata = {"schema": SCHEMA, "fields": _fields_metadata(), "cutoff": RC, **metadata}
+        self._metadata = {"schema": SCHEMA, "fields": _fields_metadata(), "cutoff": RC,
+                          "elements": list(ELEMENTS), **metadata}
         self._file = open(self.path / "records.bin", "wb")
         self._compressor = zstandard.ZstdCompressor(level=ZSTD_LEVEL)
         self._ids: list[str] = []
@@ -230,8 +242,13 @@ class Store:
             self.dims: np.ndarray = index["dims"]
         self.records: dict = json.loads((self.path / "records.json").read_text())
         self.metadata: dict = json.loads((self.path / "metadata.json").read_text())
-        if self.metadata.get("schema") != SCHEMA:
-            raise ValueError(f"{self.path}: schema {self.metadata.get('schema')}, expected {SCHEMA}")
+        schema = self.metadata.get("schema")
+        if schema == 1:
+            raise ValueError(f"{self.path}: schema 1 store, written before the pocket annotations "
+                             "prot_element, prot_chain_id, prot_resseq and prot_icode (schema 2); "
+                             "rebuild it with build_store.py (jobs/build_store.sbatch) and verify it")
+        if schema != SCHEMA:
+            raise ValueError(f"{self.path}: schema {schema}, expected {SCHEMA}")
         if list(self.records) != self.ids:
             raise ValueError(f"{self.path}: records.json and index.npz list different ids")
         self._row = {rid: i for i, rid in enumerate(self.ids)}

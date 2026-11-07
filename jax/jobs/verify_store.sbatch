@@ -7,6 +7,9 @@
 #   pgdh       $PAIRED/data/pgdh_graphs.pickle
 # Each run writes $TREE/work/store/<store>/verification.json (replaced if present) and logs to
 # $LOGS/aj-verify-<job>-<store>.log. All three run even if one fails; the job exits non-zero if any fails.
+# Then the species-0 census of trainside (store_census.py: untyped pocket atoms per source by element and by
+# whether the atom name is in the key table) is printed into this log and written to
+# $LOGS/aj-census-<job>-trainside.json; a census error is reported but does not fail the job.
 #
 #   sbatch --dependency=afterok:<aj-build job id> /scratch/u6xq/hussain.u6xq/aevplig-jax/jobs/verify_store.sbatch
 #SBATCH --job-name=aj-verify
@@ -78,5 +81,11 @@ for name in ("trainside", "fep", "pgdh"):
     for failure in r["failures"]:
         print(f"  FAILED {failure['id']} ({failure['source']}): {failure['checks']} aev {failure['aev_max_abs']}")
 PY
+
+# species-0 census of trainside (hydrogen names vs unmapped heavy atoms)
+st=$(date +%s)
+"$JAX_PY" -m aevplig_jax.store_census --store "$STORE/trainside" --out "$LOGS/aj-census-$JID-trainside.json" \
+  || echo "[verify] census of trainside FAILED (see above)" >&2
+echo "[verify] TIMING census_trainside $(( $(date +%s) - st ))s"
 stamp "done; total $(( $(date +%s) - t0 ))s"
 [ $fail = 0 ] || { echo "[verify] a verification failed (logs: $LOGS/aj-verify-$JID-*.log)" >&2; exit 1; }

@@ -34,6 +34,7 @@ Modules of `src/aevplig_jax/`:
 | `store.py` | zstd record store (`records.bin`, `index.npz`, `metadata.json`, `records.json`), reader, writer, merge and side-table join |
 | `build_store.py` | store builder from a processed CSV and the extracted archives, or from a generic CSV (FEP, PGDH) |
 | `verify_store.py` | store verification against the pickled graphs (AEV, RDKit columns, bonds) |
+| `store_census.py` | species-0 pocket atoms of a store per source, by element and by atom-name code |
 | `batching.py` | per-epoch batch plans, static capacities, one-time record preparation in a fork pool, padded batch assembly |
 | `loading.py` | jax-Ka's batch-loading protocol (`BatchSource`, `Prefetcher`, `LoaderTelemetry`, `DeferredScalars`), copied with a provenance header |
 | `model.py` | GATv2Net in JAX: initialisation, on-device AEV features, neighbour-list GATv2 layers, masked BatchNorm, pooling, readout |
@@ -114,7 +115,7 @@ predict only) opts out with a warning, for synthetic stores and smoke runs.
 | Job | Env | Writes (under `$TREE/work`) | Time |
 |---|---|---|---|
 | `build_store.sbatch` | AEV-PLIG | `store/{pdbbind,bindingnet,bindingdb,trainside,fep,pgdh}/`, logs in `store/logs/` | 1.5-2.5 min wall (92 s of building) |
-| `verify_store.sbatch` | jax-Ka | `store/{trainside,fep,pgdh}/verification.json` | 2 min |
+| `verify_store.sbatch` | jax-Ka | `store/{trainside,fep,pgdh}/verification.json`; the trainside species-0 census in the log and `store/logs/aj-census-<job>-trainside.json` | 2 min |
 | `selftest.sbatch` | jax-Ka | pytest on the CPU, then a 2-epoch GPU smoke in `output/selftest/` | 1 min |
 | `train.sbatch` | jax-Ka | `output/$TAG/manifest.json`; `output/$TAG/seed-<i>/{protocol.json, history.jsonl, selection.json, test_predictions.csv, checkpoints/{best,latest}/state.npz}`; `output/predictions/${TAG}_..._test_seed<i>.csv` | 14 min per seed TF32, 22 min float32 |
 | `eval.sbatch` | jax-Ka | `output/eval/$TAG/`: `predictions_{test,fep,pgdh}.csv`, `casf_summary.csv`, `fep_summary.csv`, `fep_per_series.csv`, `pgdh_summary.csv`, `SUMMARY.md` | 35 s |

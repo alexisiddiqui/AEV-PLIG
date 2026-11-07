@@ -9,19 +9,22 @@ import os
 import subprocess
 import sys
 import threading
+import zlib
 from pathlib import Path
 
 import numpy as np
 import pytest
 import zstandard
 
-from aevplig_jax.pdb_atoms import PocketArrays
+from aevplig_jax import store_census
+from aevplig_jax.pdb_atoms import ELEMENTS, PocketArrays
 from aevplig_jax.rdkit_features import LigandArrays
 from aevplig_jax.store import FIELDS, Record, Store, StoreWriter, join_side, merge_stores
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 FIELD_NAMES = ["lig_xyz", "lig_feat", "bond_src", "bond_dst", "bond_type", "prot_xyz",
-               "prot_species", "prot_res", "prot_resname", "prot_atom", "prot_chain", "prot_bfactor"]
+               "prot_species", "prot_res", "prot_resname", "prot_atom", "prot_chain", "prot_bfactor",
+               "prot_element", "prot_chain_id", "prot_resseq", "prot_icode"]
 METADATA = {"pocket_radius": 10.0, "species": {"ALA-CA": 2}, "versions": {"numpy": np.__version__}}
 
 # Ligand of record "a" and its pocket. Distances to the ligand atoms (0,0,0), (1.5,0,0), (0.75,1.3,0):
@@ -37,8 +40,12 @@ SPECIES_A = [5, 12, 1, 0, 7, 3]
 
 def make_record(rng, rid, lig_xyz, prot_xyz, species, n_bonds, label=5.5, split="train",
                 source="synthetic", meta=None) -> Record:
-    """A record with the given coordinates and species and random values in every other field."""
+    """A record with the given coordinates and species and random values in every other field.
+
+    The schema-2 pocket fields come from a generator seeded by ``rid``, so ``rng``'s stream (and
+    every random record built from it) is what it was before they were added."""
     n_lig, n_prot = len(lig_xyz), len(prot_xyz)
+    extra = np.random.default_rng(zlib.crc32(rid.encode()))
     bond_type = np.zeros((n_bonds, 4), dtype=np.float32)
     bond_type[np.arange(n_bonds), rng.integers(0, 4, n_bonds)] = 1.0
     lig = LigandArrays(
@@ -56,6 +63,10 @@ def make_record(rng, rid, lig_xyz, prot_xyz, species, n_bonds, label=5.5, split=
         atom=rng.integers(-1, 37, n_prot, dtype=np.int16),
         chain=rng.integers(0, 3, n_prot, dtype=np.int8),
         bfactor=rng.uniform(0, 80, n_prot).astype(np.float16),
+        element=extra.integers(0, len(ELEMENTS), n_prot, dtype=np.int8),
+        chain_id=extra.integers(ord("A"), ord("E"), n_prot, dtype=np.int8),
+        resseq=extra.integers(-5, 3000, n_prot, dtype=np.int32),
+        icode=extra.choice(np.array([0, ord("A"), ord("B")], dtype=np.int8), n_prot),
     )
     return Record(id=rid, lig=lig, pocket=pocket, label=label, source=source, split=split,
                   meta=meta if meta is not None else {})
@@ -75,7 +86,9 @@ def field_arrays(record: Record) -> dict:
     return {"lig_xyz": lig.xyz, "lig_feat": lig.feat, "bond_src": lig.bond_src,
             "bond_dst": lig.bond_dst, "bond_type": lig.bond_type, "prot_xyz": pocket.xyz,
             "prot_species": pocket.species, "prot_res": pocket.res, "prot_resname": pocket.resname,
-            "prot_atom": pocket.atom, "prot_chain": pocket.chain, "prot_bfactor": pocket.bfactor}
+            "prot_atom": pocket.atom, "prot_chain": pocket.chain, "prot_bfactor": pocket.bfactor,
+            "prot_element": pocket.element, "prot_chain_id": pocket.chain_id,
+            "prot_resseq": pocket.resseq, "prot_icode": pocket.icode}
 
 
 def assert_same_record(got: Record, want: Record):
@@ -110,7 +123,9 @@ def test_fields_order_and_dtypes():
     assert dtypes == {"lig_xyz": np.float32, "lig_feat": np.float32, "bond_src": np.int32,
                       "bond_dst": np.int32, "bond_type": np.float32, "prot_xyz": np.float32,
                       "prot_species": np.int8, "prot_res": np.int32, "prot_resname": np.int8,
-                      "prot_atom": np.int16, "prot_chain": np.int8, "prot_bfactor": np.float16}
+                      "prot_atom": np.int16, "prot_chain": np.int8, "prot_bfactor": np.float16,
+                      "prot_element": np.int8, "prot_chain_id": np.int8, "prot_resseq": np.int32,
+                      "prot_icode": np.int8}
     trailing = {name: tuple(shape) for name, _, shape in FIELDS}
     assert trailing["lig_xyz"] == (3,) and trailing["lig_feat"] == (15,)
     assert trailing["bond_type"] == (4,) and trailing["prot_xyz"] == (3,)
@@ -137,7 +152,7 @@ def test_store_round_trip(tmp_path, rng):
     assert offset[0] == 0 and offset[1] == length[0]
     assert (path / "records.bin").stat().st_size == length.sum()
 
-    # Each frame is one zstd frame of the twelve arrays' bytes in FIELDS order.
+    # Each frame is one zstd frame of the sixteen arrays' bytes in FIELDS order.
     blob = (path / "records.bin").read_bytes()
     for i, record in enumerate([a, b]):
         frame = blob[offset[i]:offset[i] + length[i]]
@@ -152,12 +167,15 @@ def test_store_round_trip(tmp_path, rng):
     assert records["b"]["label"] is None  # NaN is written as null
 
     metadata = json.loads((path / "metadata.json").read_text())
-    assert metadata["schema"] == 1 and metadata["cutoff"] == 5.1
+    assert metadata["schema"] == 2 and metadata["cutoff"] == 5.1
     assert metadata["pocket_radius"] == 10.0 and metadata["species"] == {"ALA-CA": 2}
+    assert metadata["elements"] == list(ELEMENTS) and metadata["elements"][:7] == [
+        "other", "C", "N", "O", "S", "P", "H"]
     assert [f["name"] for f in metadata["fields"]] == FIELD_NAMES
     assert metadata["fields"][0] == {"name": "lig_xyz", "dtype": "<f4", "shape": ["L", 3]}
     assert metadata["fields"][2] == {"name": "bond_src", "dtype": "<i4", "shape": ["E"]}
-    assert metadata["fields"][-1] == {"name": "prot_bfactor", "dtype": "<f2", "shape": ["P"]}
+    assert metadata["fields"][11] == {"name": "prot_bfactor", "dtype": "<f2", "shape": ["P"]}
+    assert metadata["fields"][-2] == {"name": "prot_resseq", "dtype": "<i4", "shape": ["P"]}
 
     with Store(path) as store:
         assert store.ids == ["a", "b"] and len(store) == 2
@@ -171,6 +189,14 @@ def test_store_round_trip(tmp_path, rng):
         assert store.metadata == metadata and store.records == records
         with pytest.raises(KeyError):
             store.get("missing")
+
+
+def test_store_refuses_schema_1(tmp_path, rng):
+    path = write_store(tmp_path / "store", [random_record(rng, "a")])
+    metadata = json.loads((path / "metadata.json").read_text())
+    (path / "metadata.json").write_text(json.dumps({**metadata, "schema": 1}))
+    with pytest.raises(ValueError, match="schema 1.*prot_element.*rebuild"):
+        Store(path)
 
 
 def test_store_dims_match_brute_force_on_random_records(tmp_path, rng):
@@ -282,3 +308,35 @@ def test_store_module_does_not_import_rdkit_or_pandas():
     out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
                          check=True)
     assert out.stdout.strip() == "[]"
+
+
+def test_store_census_counts_species_zero_atoms(tmp_path, rng, capsys):
+    h, c, se = ELEMENTS.index("H"), ELEMENTS.index("C"), ELEMENTS.index("SE")
+
+    def pocket_record(rid, source, species, element, atom):
+        record = make_record(rng, rid, LIG_A, rng.uniform(0, 8, (len(species), 3)), species,
+                             n_bonds=2, source=source)
+        record.pocket.element = np.asarray(element, dtype=np.int8)
+        record.pocket.atom = np.asarray(atom, dtype=np.int16)
+        return record
+
+    records = [  # species 0: H with atom -1 (1HA), C with a known name (MSE-CA), SE (MSE-SE)
+        pocket_record("a", "pdbbind", [0, 0, 3, 0, 5], [h, c, c, se, c], [-1, 1, 1, -1, 2]),
+        pocket_record("b", "pdbbind", [0, 4], [h, c], [-1, 3]),
+        pocket_record("c", "bindingnet", [0, 0, 0, 2], [h, h, c, c], [-1, 5, -1, 0]),
+    ]
+    path = write_store(tmp_path / "store", records)
+    census = store_census.census(path)
+    assert census["pdbbind"] == {"records": 2, "atoms": 7, "species0": 4,
+                                 "by_element": {"H": {"atom_unknown": 2, "atom_known": 0},
+                                                "C": {"atom_unknown": 0, "atom_known": 1},
+                                                "SE": {"atom_unknown": 1, "atom_known": 0}}}
+    assert census["bindingnet"]["species0"] == 3
+    assert census["bindingnet"]["by_element"] == {"H": {"atom_unknown": 1, "atom_known": 1},
+                                                  "C": {"atom_unknown": 1, "atom_known": 0}}
+
+    out = tmp_path / "census.json"
+    assert store_census.main(["--store", str(path), "--out", str(out)]) == 0
+    printed = capsys.readouterr().out
+    assert "| pdbbind | H | 2 | 0 | 2 |" in printed and "| bindingnet | C | 1 | 0 | 1 |" in printed
+    assert json.loads(out.read_text()) == census

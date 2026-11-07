@@ -47,6 +47,8 @@ def ligand_record(rid, lig_xyz, bonds, prot_xyz=(), species=(), label=6.0) -> Re
         species=np.asarray(species, dtype=np.int8), res=np.zeros(n_prot, np.int32),
         resname=np.zeros(n_prot, np.int8), atom=np.zeros(n_prot, np.int16),
         chain=np.zeros(n_prot, np.int8), bfactor=np.zeros(n_prot, np.float16),
+        element=np.zeros(n_prot, np.int8), chain_id=np.zeros(n_prot, np.int8),
+        resseq=np.zeros(n_prot, np.int32), icode=np.zeros(n_prot, np.int8),
     )
     return Record(id=rid, lig=lig, pocket=pocket, label=label, source="synthetic", split="train")
 

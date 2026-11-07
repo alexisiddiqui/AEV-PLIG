@@ -43,7 +43,7 @@ def species():
 
 @pytest.fixture
 def records(species, rng):
-    """Benzamide against ``pocket.pdb`` (L 9, E 18, A 24, KA 16), the synthetic record of
+    """Benzamide against ``pocket.pdb`` (L 9, E 18, P 42, A 24, KA 16), the synthetic record of
     test_store.py (L 3, A 3) and a record with no typed atom within 5.1 A and no bonds (A = 0, E = 0).
     """
     pytest.importorskip("rdkit", reason="needs RDKit (absent from the jax-Ka training venv)")
@@ -83,7 +83,7 @@ def run(store: Path, pickles: list[Path], *extra: str) -> tuple[int, dict]:
 def test_verify_passes_on_consistent_pickle(tmp_path, records):
     store = write_store(tmp_path / "store", records)
     with Store(store) as opened:
-        np.testing.assert_array_equal(opened.dims, [[3, 4, 6, 3, 3], [9, 18, 41, 24, 16], [2, 0, 2, 0, 0]])
+        np.testing.assert_array_equal(opened.dims, [[3, 4, 6, 3, 3], [9, 18, 42, 24, 16], [2, 0, 2, 0, 0]])
     graphs = {record.id: graph_of(record) for record in records}
     assert np.abs(np.asarray(graphs[BENZAMIDE][1])[:, 15:]).max() > 0.1  # a non-trivial oracle
     assert not np.asarray(graphs[FAR][1])[:, 15:].any()
