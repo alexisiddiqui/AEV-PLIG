@@ -258,6 +258,11 @@ def test_trace_summary_sums_kernels(tmp_path):
 
     missing = profile.trace_kernels(tmp_path / "empty", tmp_path / "empty", steps=2)
     assert "no perfetto_trace.json.gz" in missing["error"]
+    host_only = tmp_path / "host.json"
+    host_only.write_text(json.dumps({"traceEvents": PERFETTO["traceEvents"][:1]
+                                     + PERFETTO["traceEvents"][5:6]}))
+    empty = profile.trace_kernels(host_only, tmp_path / "host", steps=2)
+    assert "no GPU kernel events" in empty["error"] and "/host:CPU" in empty["error"]
 
 
 def test_padding_fractions_include_gat_slots():

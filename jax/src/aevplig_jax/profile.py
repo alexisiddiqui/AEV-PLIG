@@ -259,7 +259,8 @@ def kernel_events(trace: dict | list) -> tuple[list[dict], list[str]]:
             processes[event.get("pid")] = str(name)
         elif event.get("name") == "thread_name":
             threads[(event.get("pid"), event.get("tid"))] = str(name)
-    devices = {pid for pid, name in processes.items() if "/device:GPU" in name}
+    devices = ({pid for pid, name in processes.items() if "/device:GPU" in name}
+               or {pid for pid, name in processes.items() if "gpu" in name.lower()})
     lines = set()
     for pid in devices:
         own = {key: name for key, name in threads.items() if key[0] == pid}
@@ -329,11 +330,16 @@ def trace_kernels(trace_dir: Path, out_dir: Path, steps: int | None) -> dict:
     opener = gzip.open if path.suffix == ".gz" else open
     try:
         with opener(path, "rt") as handle:
-            events, lines = kernel_events(json.load(handle))
+            trace = json.load(handle)
+        events, lines = kernel_events(trace)
     except (OSError, ValueError, AttributeError) as error:  # keep the timings of the row
         return {"error": f"unreadable {path}: {type(error).__name__}: {error}", "trace": str(path)}
     if not events:
-        return {"error": f"no GPU kernel events in {path}", "trace": str(path)}
+        listed = trace.get("traceEvents", []) if isinstance(trace, dict) else trace
+        names = sorted({str((event.get("args") or {}).get("name")) for event in listed
+                        if event.get("ph") == "M" and event.get("name") == "process_name"})
+        return {"error": f"no GPU kernel events in {path} (processes: {names[:12]})",
+                "trace": str(path)}
     summary, rows = summarise_kernels(events, steps)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
