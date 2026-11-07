@@ -45,6 +45,7 @@ def records(species, rng):
     """Benzamide against ``pocket.pdb`` (L 9, E 18, A 24, KA 16), the synthetic record of
     test_store.py (L 3, A 3) and a record with no typed atom within 5.1 A and no bonds (A = 0, E = 0).
     """
+    pytest.importorskip("rdkit", reason="needs RDKit (absent from the jax-Ka training venv)")
     lig = ligand_arrays(read_ligand(SDF, "sdf"))
     benzamide = Record(id=BENZAMIDE, lig=lig, pocket=read_pocket(POCKET, lig.xyz, species),
                        label=6.5, source="bindingnet", split="train")

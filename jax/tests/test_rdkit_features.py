@@ -13,6 +13,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
+pytest.importorskip("rdkit", reason="needs RDKit (absent from the jax-Ka training venv)")
 from rdkit import Chem
 from rdkit.Chem import AllChem
 

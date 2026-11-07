@@ -146,21 +146,23 @@ def source_rows(name: str, processed_csv: Path, root: Path, limit: int | None = 
 def generic_rows(csv: Path, label_column: str | None = None, limit: int | None = None) -> list[Row]:
     """Rows of a ``unique_id, sdf_file, pdb_file`` CSV; source = the CSV's file stem.
 
-    Labels come from ``label_column`` (which must exist) or, when it is None, from a ``label``
-    column if there is one, else NaN. Every other column goes into ``meta``.
+    Every cell is read as the text written (``keep_default_na=False``), so codes such as ref_pdb
+    ``3E63`` or series ``1`` reach ``meta`` unchanged rather than as numbers (the trap noted in
+    paired/src/eval_paired.py's eval_fep). Labels come from ``label_column`` (which must exist) or,
+    when it is None, from a ``label`` column if there is one, else NaN; an empty label cell is NaN.
+    Every other column goes into ``meta`` as a string.
     """
-    frame = pd.read_csv(csv, nrows=limit,
-                        dtype={"unique_id": str, "sdf_file": str, "pdb_file": str})
+    frame = pd.read_csv(csv, nrows=limit, dtype=str, keep_default_na=False)
     if label_column is not None and label_column not in frame.columns:
         raise ValueError(f"{csv} has no column {label_column!r}")
     column = label_column or "label"
     has_label = column in frame.columns
     rows = []
     for i, row in enumerate(frame.to_dict("records")):
-        meta = {key: _plain(value) for key, value in row.items() if key not in ("unique_id", column)}
-        rows.append(Row(row=i, id=str(row["unique_id"]), ligand=str(row["sdf_file"]), kind="sdf",
-                        protein=str(row["pdb_file"]),
-                        label=float(row[column]) if has_label else math.nan,
+        meta = {key: value for key, value in row.items() if key not in ("unique_id", column)}
+        text = row[column].strip() if has_label else ""
+        rows.append(Row(row=i, id=row["unique_id"], ligand=row["sdf_file"], kind="sdf",
+                        protein=row["pdb_file"], label=float(text) if text else math.nan,
                         split=GENERIC_SPLIT, source=Path(csv).stem, meta=meta))
     return rows
 

@@ -15,7 +15,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from aevplig_jax.build_store import main
+pytest.importorskip("rdkit", reason="needs RDKit (absent from the jax-Ka training venv)")
+from aevplig_jax.build_store import generic_rows, main
 from aevplig_jax.constants import species_table
 from aevplig_jax.pdb_atoms import read_pocket
 from aevplig_jax.rdkit_features import ligand_arrays, read_ligand
@@ -241,9 +242,36 @@ def test_build_generic_label_column(tmp_path, species):
     assert main([*args, "--out", str(tmp_path / "nolabel")]) == 0
     with Store(tmp_path / "nolabel") as store:
         assert np.isnan(store.labels()).all()
-        assert store.get("pgdh/S1/compound_1").meta["pK"] == 10.5
+        assert store.get("pgdh/S1/compound_1").meta["pK"] == "10.5"  # meta keeps the CSV text
     with pytest.raises(SystemExit):
         main([*args, "--label-column", "pIC50", "--out", str(tmp_path / "bad")])
+
+
+def test_generic_rows_keep_text_columns_as_written(tmp_path):
+    # Codes pandas would parse as numbers: ref_pdb 3E63 (float 3e+63), series "1" and "07", an
+    # empty ref_pdb; only the label column becomes a float (an empty label is NaN).
+    csv = tmp_path / "fep_benchmark.csv"
+    csv.write_text("unique_id,pK,sdf_file,pdb_file,subset,series,ref_pdb,n_entries\n"
+                   '"jacs/1/lig 2, deprot",6.25,a.sdf,a.pdb,jacs,1,3E63,1\n'
+                   "jacs/07/x,,b.sdf,b.pdb,jacs,07,,2\n")
+    rows = generic_rows(csv, "pK")
+    assert [row.id for row in rows] == ["jacs/1/lig 2, deprot", "jacs/07/x"]
+    assert rows[0].label == 6.25 and math.isnan(rows[1].label)
+    assert rows[0].meta == {"sdf_file": "a.sdf", "pdb_file": "a.pdb", "subset": "jacs",
+                            "series": "1", "ref_pdb": "3E63", "n_entries": "1"}
+    assert rows[1].meta["series"] == "07" and rows[1].meta["ref_pdb"] == ""
+
+
+def test_build_generic_keeps_meta_strings(tmp_path, species):
+    csv = _generic_csv(tmp_path / "fep.csv", [
+        {"unique_id": "s/1/a", "pK": 7.5, "sdf_file": str(SDF), "pdb_file": str(POCKET),
+         "subset": "s", "series": "1", "ref_pdb": "3E63"}])
+    assert main(["--generic", "--csv", str(csv), "--keys", str(KEYS_CSV), "--label-column", "pK",
+                 "--out", str(tmp_path / "store")]) == 0
+    with Store(tmp_path / "store") as store:
+        assert store.records["s/1/a"]["meta"] == {"sdf_file": str(SDF), "pdb_file": str(POCKET),
+                                                   "subset": "s", "series": "1", "ref_pdb": "3E63"}
+        np.testing.assert_array_equal(store.labels(), [7.5])
 
 
 def test_build_records_failures_and_continues(tmp_path, species):
