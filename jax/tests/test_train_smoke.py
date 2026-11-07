@@ -104,6 +104,7 @@ def test_train_smoke_two_epochs(tmp_path):
 
     protocol = json.loads((seed_dir / "protocol.json").read_text())
     assert protocol["flags"]["limit"] == 40 and protocol["flags"]["aev"] == "onthefly"
+    assert train.run_precision(run) == "default"  # what eval.sbatch passes to predict.py
     assert protocol["seed"] == 100 and protocol["constants"]["SELECTION_WINDOW"] == 8
     assert {"train.py", "model.py", "batching.py", "inference.py"} <= set(protocol["package_sha256"])
     assert protocol["capacities"] == manifest["capacities"]
@@ -129,6 +130,21 @@ def test_train_and_predict_refuse_unverified_stores(tmp_path, capsys):
     assert "--skip-verification" in capsys.readouterr().err
     protocol = json.loads((out / "optout" / "seed-0" / "protocol.json").read_text())
     assert protocol["flags"]["skip_verification"] is True
+
+
+def test_run_precision_reads_every_seed_protocol(tmp_path):
+    run = tmp_path / "run"
+    with pytest.raises(ValueError, match="no seed-\\*/protocol.json"):
+        train.run_precision(run)
+    for index in (0, 1, 10):
+        (run / f"seed-{index}").mkdir(parents=True)
+        (run / f"seed-{index}" / "protocol.json").write_text(
+            json.dumps({"flags": {"precision": "highest"}}))
+    assert train.run_precision(run) == "highest"
+    (run / "seed-2").mkdir()
+    (run / "seed-2" / "protocol.json").write_text(json.dumps({"flags": {"precision": "default"}}))
+    with pytest.raises(ValueError, match="disagree"):
+        train.run_precision(run)
 
 
 def test_selection_rule_window_of_eight():

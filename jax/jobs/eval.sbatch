@@ -1,7 +1,9 @@
 #!/bin/bash
 # Ensemble evaluation of a JAX training tag: predict.py with every seed's best checkpoint on the CASF test split
 # (trainside, split test), the FEP benchmark store and the 15-PGDH store, then evaluate.py for each and a
-# SUMMARY.md table. Run from $TREE with $JAX_PY.
+# SUMMARY.md table. Predictions use the matmul precision the seeds trained with (flags.precision of every
+# $RUN/seed-*/protocol.json, train.run_precision; the job stops if they disagree), and the SUMMARY.md header
+# states it. Run from $TREE with $JAX_PY.
 #   mkdir -p /scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/logs
 #   sbatch --export=ALL,TAG=jax /scratch/u6xq/hussain.u6xq/aevplig-jax/jobs/eval.sbatch
 #   (after training: --dependency=afterok:<aj-train array job id>)
@@ -29,14 +31,20 @@ cd "$TREE"
 [ -f "$RUN/manifest.json" ] || { echo "missing $RUN/manifest.json (train tag $TAG first)" >&2; exit 1; }
 n=$( (compgen -G "$CHECKPOINTS" || true) | wc -l)
 [ "$n" -gt 0 ] || { echo "no best checkpoints under $RUN" >&2; exit 1; }
-echo "[eval] $(date -Is) tag $TAG: $n best checkpoints on $(hostname)"
+PRECISION=$("$JAX_PY" -c 'import sys; from aevplig_jax.train import run_precision; print(run_precision(sys.argv[1]))' "$RUN")
+case $PRECISION in
+  highest) PRECISION_TEXT="highest (strict float32)" ;;
+  default) PRECISION_TEXT="default (TF32 on the GPU)" ;;
+  *) PRECISION_TEXT=$PRECISION ;;
+esac
+echo "[eval] $(date -Is) tag $TAG: $n best checkpoints on $(hostname); matmul precision $PRECISION_TEXT"
 mkdir -p "$OUT"
 
 predict() {  # predict <name> <store> [args...]
   local name=$1 store=$2; shift 2
   "$JAX_PY" -m aevplig_jax.predict --store "$STORE/$store" --checkpoints "$CHECKPOINTS" \
     --manifest "$RUN/manifest.json" --out "$OUT/predictions_$name.csv" \
-    --workers 15 --prefetch 4 --prepare-workers 12 "$@"
+    --precision "$PRECISION" --workers 15 --prefetch 4 --prepare-workers 12 "$@"
 }
 predict test trainside --split test
 predict fep fep
@@ -45,5 +53,5 @@ predict pgdh pgdh
 "$JAX_PY" -m aevplig_jax.evaluate casf --predictions "$OUT/predictions_test.csv" --out-dir "$OUT"
 "$JAX_PY" -m aevplig_jax.evaluate fep --predictions "$OUT/predictions_fep.csv" --out-dir "$OUT"
 "$JAX_PY" -m aevplig_jax.evaluate pgdh --predictions "$OUT/predictions_pgdh.csv" --out-dir "$OUT"
-"$JAX_PY" -m aevplig_jax.evaluate summary --eval-dir "$OUT" --title "JAX AEV-PLIG ensemble: $TAG ($n members)"
+"$JAX_PY" -m aevplig_jax.evaluate summary --eval-dir "$OUT" --title "JAX AEV-PLIG ensemble: $TAG ($n members, matmul precision $PRECISION_TEXT)"
 echo "[eval] done $(date -Is): $OUT/SUMMARY.md"

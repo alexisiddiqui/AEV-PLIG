@@ -142,6 +142,20 @@ def package_hashes() -> dict[str, str]:
             for path in sorted(PACKAGE.glob("*.py"))}
 
 
+def run_precision(run_dir: Path) -> str:
+    """The ``--precision`` every seed of a tag trained with (``flags.precision`` of
+    ``<run_dir>/seed-*/protocol.json``), for predicting with the same matmul precision; raises
+    ``ValueError`` when there is no protocol or the seeds disagree."""
+    found = {}
+    for path in sorted(Path(run_dir).glob("seed-*/protocol.json")):
+        found[path.parent.name] = json.loads(path.read_text())["flags"]["precision"]
+    if not found:
+        raise ValueError(f"{run_dir}: no seed-*/protocol.json")
+    if len(set(found.values())) > 1:
+        raise ValueError(f"{run_dir}: seeds disagree on --precision: {found}")
+    return next(iter(found.values()))
+
+
 def _label(store: Store, rid: str) -> float:
     label = store.records[rid]["label"]
     return math.nan if label is None else float(label)
