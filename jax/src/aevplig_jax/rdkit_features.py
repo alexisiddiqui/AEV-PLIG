@@ -4,17 +4,23 @@ Replicates ``atom_features``, ``mol_to_graph`` and the ligand coordinates of ``L
 generate_bindingnet_graphs.py, and the per-source reading paths: sdf (BindingNet, FEP, 15-PGDH) via
 ``SDMolSupplier(removeHs=False)``, mol2 (PDBbind, BindingDB) via ``MolFromMol2File`` then
 ``AddHs(addCoords=True)`` (generate_pdbbind_graphs.py).
+
+RDKit is imported inside ``read_ligand`` only, so ``LigandArrays`` imports without RDKit: the store
+reader uses it in the training venv, which has no RDKit.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-from rdkit import Chem
 
 from aevplig_jax.constants import ATOM_SYMBOLS, BOND_TYPES, EDGE_DIM, RDKIT_DIM
+
+if TYPE_CHECKING:
+    from rdkit import Chem
 
 
 @dataclass
@@ -34,6 +40,8 @@ def read_ligand(path: Path, kind: str) -> Chem.Mol | None:
     ``kind`` is ``"sdf"`` (first record, hydrogens kept) or ``"mol2"`` (hydrogens added with
     coordinates). Missing or empty files raise RDKit's ``OSError``.
     """
+    from rdkit import Chem
+
     if kind == "sdf":
         supplier = Chem.SDMolSupplier(str(path), removeHs=False)
         return supplier[0] if len(supplier) else None
