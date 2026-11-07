@@ -34,6 +34,7 @@ Imports numpy, the standard library and package modules; no jax. Arrays stay on 
 from __future__ import annotations
 
 import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import NamedTuple
@@ -233,10 +234,11 @@ def _prepare_chunk(ids: list[str]) -> list[Prepared]:
 def prepare_all(store: Store, ids, workers: int = 1) -> dict[str, Prepared]:
     """``prepare`` every id once; the dict follows ``ids`` order and does not depend on ``workers``.
 
-    With ``workers > 1`` and the fork start method available, chunks of ids are prepared in a fork
-    ``Pool`` of ``workers`` processes, each opening its own ``Store`` on ``store.path`` (no
-    descriptor or decompressor is shared with the parent); otherwise inline. Call it before jax
-    starts its threads: forking a process that runs jax warns and can deadlock.
+    With ``workers > 1`` and the fork start method available, chunks of ids are prepared by a
+    ``ProcessPoolExecutor`` of ``workers`` forked processes, each opening its own ``Store`` on
+    ``store.path`` (no descriptor or decompressor is shared with the parent); otherwise inline. A
+    worker that fails to start or dies raises ``BrokenProcessPool`` here instead of hanging. Call it
+    before jax starts its threads: forking a process that runs jax warns and can deadlock.
     """
     ids = [str(rid) for rid in ids]
     context = _fork_context() if workers > 1 else None
@@ -245,8 +247,10 @@ def prepare_all(store: Store, ids, workers: int = 1) -> dict[str, Prepared]:
     size = max(1, -(-len(ids) // (4 * workers)))  # about four chunks per worker
     chunks = [ids[start:start + size] for start in range(0, len(ids), size)]
     prepared: dict[str, Prepared] = {}
-    with context.Pool(workers, initializer=_open_worker_store, initargs=(str(store.path),)) as pool:
-        for chunk, items in zip(chunks, pool.imap(_prepare_chunk, chunks)):
+    with ProcessPoolExecutor(max_workers=workers, mp_context=context,
+                             initializer=_open_worker_store,
+                             initargs=(str(store.path),)) as executor:
+        for chunk, items in zip(chunks, executor.map(_prepare_chunk, chunks)):  # in chunk order
             prepared.update(zip(chunk, items))
     return prepared
 

@@ -370,6 +370,43 @@ def test_prepare_all_is_independent_of_worker_count(tmp_path, rng):
     assert (out.stdout.strip(), out.stderr) == ("identical 30", "")
 
 
+# Fresh interpreter, as above. Both failures must raise BrokenProcessPool in the parent rather
+# than hang: a worker whose Store cannot open (the schema is changed after the parent opened it) and
+# a worker that dies mid-chunk (as under the OOM killer).
+FAILING_POOL_SCRIPT = """
+import json, os, sys
+from concurrent.futures.process import BrokenProcessPool
+from aevplig_jax import batching
+from aevplig_jax.store import Store
+
+store = Store(sys.argv[1])
+metadata_path = store.path / "metadata.json"
+metadata = metadata_path.read_text()
+metadata_path.write_text(json.dumps({**json.loads(metadata), "schema": 99}))
+try:
+    batching.prepare_all(store, store.ids, workers=2)
+except BrokenProcessPool:
+    print("initializer failure raised")
+metadata_path.write_text(metadata)
+batching.prepare = lambda record: os._exit(1)
+try:
+    batching.prepare_all(store, store.ids, workers=2)
+except BrokenProcessPool:
+    print("worker death raised")
+"""
+
+
+@pytest.mark.skipif("fork" not in multiprocessing.get_all_start_methods(),
+                    reason="needs the fork start method")
+def test_prepare_all_raises_when_a_worker_fails(tmp_path, rng):
+    path = write_store(tmp_path / "store", random_records(rng, 9))
+    env = {**os.environ, "PYTHONPATH": str(SRC)}
+    out = subprocess.run([sys.executable, "-c", FAILING_POOL_SCRIPT, str(path)], env=env,
+                         capture_output=True, text=True, timeout=60)  # a hang fails the test
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert out.stdout.split() == "initializer failure raised worker death raised".split()
+
+
 def test_batching_imports_no_jax_rdkit_or_pandas():
     code = ("import sys, aevplig_jax.batching, aevplig_jax.loading; "
             "print(sorted({'jax', 'rdkit', 'pandas', 'torch'} & set(sys.modules)))")
