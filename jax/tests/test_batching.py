@@ -1,6 +1,7 @@
 """Batch plans, capacities, host batch assembly and the store-backed batch source."""
 
 import json
+import multiprocessing
 import os
 import subprocess
 import sys
@@ -13,8 +14,8 @@ import pytest
 from aevplig_jax import batching
 from aevplig_jax.aev import radial_aev_jax, radial_aev_numpy
 from aevplig_jax.aev import neighbour_lists
-from aevplig_jax.batching import (Batch, Capacities, PreparedComplex, StoreSource, assemble,
-                                  capacities, plan_epoch, prepare)
+from aevplig_jax.batching import (Batch, Capacities, Prepared, StoreSource, assemble, capacities,
+                                  plan_epoch, prepare, prepare_all)
 from aevplig_jax.loading import BatchSource, LoaderConfig, Prefetcher
 from aevplig_jax.pdb_atoms import PocketArrays, typed_within
 from aevplig_jax.rdkit_features import LigandArrays
@@ -180,26 +181,29 @@ def test_batch_aev_matches_per_complex_reference(rng):
 
 
 def test_prepare_matches_neighbour_lists_and_assembles_the_same(rng):
-    """Per-record preparation (what the StoreSource workers run): the AEV lists equal
-    ``neighbour_lists`` over the typed subset, and assembling prepared complexes, raw records or a
-    mix gives the same batch."""
+    """Per-record preparation (``prepare_all`` runs it once per record): compact arrays whose AEV
+    lists equal ``neighbour_lists`` over the typed subset; assembling prepared records, raw records
+    or a mix gives the same batch."""
     records = random_records(rng, 6)
     for record in records:
         item = prepare(record)
-        assert isinstance(item, PreparedComplex) and item.id == record.id
+        n_lig = len(record.lig.xyz)
+        assert isinstance(item, Prepared) and (item.id, item.label) == (record.id, record.label)
         typed = typed_within(record.pocket, record.lig.xyz)
         np.testing.assert_array_equal(item.env_xyz, record.pocket.xyz[typed])
         np.testing.assert_array_equal(item.env_species, record.pocket.species[typed])
-        assert item.env_species.dtype == np.int32
+        assert item.env_species.dtype == np.int8
+        assert item.nbr.dtype == item.aev_nbr.dtype == np.int16
+        assert item.degree.dtype == item.aev_count.dtype == np.int32
         if typed.any():
             nbr, mask = neighbour_lists(record.lig.xyz, record.pocket.xyz[typed])
-            np.testing.assert_array_equal(item.aev_mask, mask)
+            np.testing.assert_array_equal(item.aev_count, mask.sum(axis=1))
             np.testing.assert_array_equal(item.aev_nbr, np.where(mask, nbr, 0))
         else:
-            assert item.aev_nbr.shape == (len(record.lig.xyz), 0)
-        degree = np.bincount(record.lig.bond_dst, minlength=len(record.lig.xyz))
-        assert item.nbr.shape == (len(record.lig.xyz), 1 + degree.max(initial=0))
-        np.testing.assert_array_equal(item.nbr_mask.sum(axis=1), 1 + degree)
+            assert item.aev_nbr.shape == (n_lig, 0) and not item.aev_count.any()
+        degree = np.bincount(record.lig.bond_dst, minlength=n_lig)
+        np.testing.assert_array_equal(item.degree, degree)
+        assert item.nbr.shape == (n_lig, 1 + degree.max(initial=0))
     cap = Capacities(ncap=256, mcap=2048, kb=32, ka=320, batch=8)
     want = assemble(records, cap, y_mean=6.0, y_sd=2.0)
     mixed = [prepare(r) if i % 2 else r for i, r in enumerate(records)]
@@ -207,6 +211,22 @@ def test_prepare_matches_neighbour_lists_and_assembles_the_same(rng):
         got = assemble(items, cap, y_mean=6.0, y_sd=2.0)
         for name in Batch._fields:
             np.testing.assert_array_equal(getattr(got, name), getattr(want, name), err_msg=name)
+
+
+def test_offsets_past_int16_range():
+    """Real batches hold ~40k environment rows, past int16: offsets added to the int16 local
+    indices must be computed in int32."""
+    rng = np.random.default_rng(5)
+    directions = rng.normal(size=(33_000, 3))
+    directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+    crowd = directions * 5.0 * rng.uniform(0, 1, (33_000, 1)) ** (1 / 3)  # all within 5 A
+    big = ligand_record("big", [[0.0, 0.0, 0.0]], [], prot_xyz=crowd, species=np.full(33_000, 3))
+    small = ligand_record("small", [[0.0, 0.0, 0.0]], [], prot_xyz=[[1.0, 0.0, 0.0]], species=[4])
+    cap = Capacities(ncap=256, mcap=34_816, kb=1, ka=33_024, batch=2)
+    batch = assemble([big, small], cap, y_mean=0.0, y_sd=1.0)
+    assert batch.aev_mask[0].sum() == 33_000
+    np.testing.assert_array_equal(batch.aev_nbr[0, :33_000], np.arange(33_000))  # no int16 wrap
+    assert (batch.aev_nbr[1, 0], batch.aev_mask[1, 0], batch.env_species[33_000]) == (33_000, 1, 4)
 
 
 def _two_records():
@@ -274,7 +294,7 @@ def test_prefetcher_yields_in_order(tmp_path, rng):
     cap = Capacities(ncap=1024, mcap=8192, kb=32, ka=320, batch=4)
     specs = plan_epoch(np.array(store.ids), seed=7, epoch=0, batch=4)
     assert len(specs) == 5
-    source = StoreSource(store, cap, y_mean=6.0, y_sd=2.0, workers=2)
+    source = StoreSource(store, cap, y_mean=6.0, y_sd=2.0, workers=1)  # prepares every record
     assert isinstance(source, BatchSource)
     seen = []
     for spec, batch in Prefetcher(source, specs, LoaderConfig(workers=2, prefetch=2)):
@@ -284,9 +304,70 @@ def test_prefetcher_yields_in_order(tmp_path, rng):
             np.testing.assert_array_equal(getattr(batch, name), getattr(want, name), err_msg=name)
     assert [list(s) for s in seen] == [list(s) for s in specs]
     assert source.provenance() == {"store": str(store.path), "capacities": cap.to_json(),
-                                   "y_mean": 6.0, "y_sd": 2.0, "workers": 2}
+                                   "y_mean": 6.0, "y_sd": 2.0, "workers": 1, "prepared": 20}
     source.close()
     store.close()
+
+
+def test_load_only_gathers_prepared_records(tmp_path, rng, monkeypatch):
+    """``load`` neither reads the store nor prepares records: it pads what ``prepare_all`` built."""
+    records = random_records(rng, 7)
+    store = Store(write_store(tmp_path / "store", records))
+    cap = Capacities(ncap=512, mcap=4096, kb=32, ka=320, batch=8)
+    ids = store.ids[2:]
+    prepared = prepare_all(store, ids, workers=1)
+    assert list(prepared) == ids
+    spec = np.array(ids[::-1])
+    want = assemble([store.get(i) for i in spec], cap, y_mean=6.0, y_sd=2.0)
+    source = StoreSource(store, cap, y_mean=6.0, y_sd=2.0, workers=1, prepared=prepared)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("per-record work at batch time")
+
+    monkeypatch.setattr(batching, "prepare", refuse)
+    monkeypatch.setattr(store, "get", refuse)
+    got = source.load(spec)
+    for name in Batch._fields:
+        np.testing.assert_array_equal(getattr(got, name), getattr(want, name), err_msg=name)
+    with pytest.raises(KeyError, match=store.ids[0]):
+        source.load(np.array([store.ids[0]]))  # not prepared
+    store.close()
+
+
+# Runs in a fresh interpreter: forking the pytest process after jax has started its threads (the
+# AEV test above) would warn and could deadlock. The fork pool runs first, before this process
+# has used numpy's BLAS.
+PREPARE_ALL_SCRIPT = """
+import sys
+import numpy as np
+from aevplig_jax import batching
+from aevplig_jax.store import Store
+
+store = Store(sys.argv[1])
+assert batching._fork_context() is not None
+forked = batching.prepare_all(store, store.ids, workers=2)
+inline = batching.prepare_all(store, store.ids, workers=1)
+assert list(forked) == list(inline) == store.ids
+for rid in store.ids:
+    for name, value in vars(inline[rid]).items():
+        other = getattr(forked[rid], name)
+        if isinstance(value, np.ndarray):
+            assert value.dtype == other.dtype and np.array_equal(value, other), (rid, name)
+        else:
+            assert value == other, (rid, name)
+print("identical", len(store.ids))
+"""
+
+
+@pytest.mark.skipif("fork" not in multiprocessing.get_all_start_methods(),
+                    reason="needs the fork start method")
+def test_prepare_all_is_independent_of_worker_count(tmp_path, rng):
+    path = write_store(tmp_path / "store", random_records(rng, 29))
+    env = {**os.environ, "PYTHONPATH": str(SRC)}
+    out = subprocess.run([sys.executable, "-c", PREPARE_ALL_SCRIPT, str(path)], env=env,
+                         capture_output=True, text=True, timeout=300)
+    assert out.returncode == 0, out.stderr
+    assert (out.stdout.strip(), out.stderr) == ("identical 30", "")
 
 
 def test_batching_imports_no_jax_rdkit_or_pandas():
