@@ -5,10 +5,12 @@
 # $TREE with $JAX_PY.
 #   mkdir -p /scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/logs
 #   sbatch /scratch/u6xq/hussain.u6xq/aevplig-jax/jobs/profile_jax.sbatch
+#   profiles only:  sbatch --export=ALL,SKIP_SEED=1 .../jobs/profile_jax.sbatch   (no full seed; profile.json keeps
+#                   the earlier seed row and gpu_util.txt is appended to, so its utilisation still renders)
 # Outputs in $TREE/work/output/profile: profile.json, REPORT.md (the PyTorch rows come from torch/profile_torch.json
 #   when profile_torch.sbatch has finished), gpu_util.txt, trace/{onthefly,precomputed}/; the AEV table
 #   $TREE/work/output/aev_trainside.npz; the timing run $TREE/work/output/timing/ (manifest.json written by the first
-#   profile and reused by the seed; seed-0/ is removed and rerun on every submission).
+#   profile and reused by the seed; seed-0/ is removed and rerun on every submission without SKIP_SEED=1).
 #SBATCH --job-name=aj-prof-jax
 #SBATCH --partition=workq
 #SBATCH --gres=gpu:1
@@ -28,14 +30,20 @@ TABLE=$TREE/work/output/aev_trainside.npz
 TAG=timing
 RUN=$TREE/work/output/$TAG
 LOADER=(--workers 15 --prefetch 4 --prepare-workers 12)
+SKIP_SEED=${SKIP_SEED:-0}
 cd "$TREE"
 mkdir -p "$OUT"
 t_job=$(date +%s)
 stamp() { echo "[profile-jax] $(date +%H:%M:%S) +$(( $(date +%s) - t_job ))s $*"; }
 stamp "job ${SLURM_JOB_ID:-$$} on $(hostname)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-# GPU utilisation every 5 s with date and time (profile.py matches samples to each phase's window)
-stdbuf -oL nvidia-smi dmon -s u -d 5 -o DT > "$OUT/gpu_util.txt" &
+# GPU utilisation every 5 s with date and time (profile.py matches samples to each phase's window); with
+# SKIP_SEED=1 appended, so the kept seed row's window still finds the earlier job's samples
+if [ "$SKIP_SEED" = 1 ]; then
+  stdbuf -oL nvidia-smi dmon -s u -d 5 -o DT >> "$OUT/gpu_util.txt" &
+else
+  stdbuf -oL nvidia-smi dmon -s u -d 5 -o DT > "$OUT/gpu_util.txt" &
+fi
 DMON=$!
 trap 'kill "$DMON" 2>/dev/null || true' EXIT
 
@@ -54,15 +62,22 @@ for aev in onthefly precomputed; do
   stamp "profile $aev done"
 done
 
-# 3. one full seed, timed end to end (start-up, 200 epochs with validation, test prediction)
-rm -rf "$RUN/seed-0"
-t0=$(date +%s)
-"$JAX_PY" -m aevplig_jax.train --store-root "$STORE" --tag "$TAG" --seed-index 0 --epochs 200 \
-  --out "$TREE/work/output" "${LOADER[@]}"
-t1=$(date +%s)
-stamp "full seed: $(( t1 - t0 )) s"
-kill "$DMON" 2>/dev/null || true
-wait "$DMON" 2>/dev/null || true
-"$JAX_PY" -m aevplig_jax.profile --out "$OUT" --seed-run "$RUN/seed-0" --seed-window "$t0" "$t1"
+# 3. one full seed, timed end to end (start-up, 200 epochs with validation, test prediction), unless SKIP_SEED=1
+if [ "$SKIP_SEED" = 1 ]; then
+  stamp "SKIP_SEED=1: no full seed; re-rendering with the seed row already in profile.json (if any)"
+  kill "$DMON" 2>/dev/null || true
+  wait "$DMON" 2>/dev/null || true
+  "$JAX_PY" -m aevplig_jax.profile --out "$OUT"
+else
+  rm -rf "$RUN/seed-0"
+  t0=$(date +%s)
+  "$JAX_PY" -m aevplig_jax.train --store-root "$STORE" --tag "$TAG" --seed-index 0 --epochs 200 \
+    --out "$TREE/work/output" "${LOADER[@]}"
+  t1=$(date +%s)
+  stamp "full seed: $(( t1 - t0 )) s"
+  kill "$DMON" 2>/dev/null || true
+  wait "$DMON" 2>/dev/null || true
+  "$JAX_PY" -m aevplig_jax.profile --out "$OUT" --seed-run "$RUN/seed-0" --seed-window "$t0" "$t1"
+fi
 stamp "done"
 cat "$OUT/REPORT.md"

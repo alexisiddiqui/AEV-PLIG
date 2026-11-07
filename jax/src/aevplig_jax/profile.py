@@ -134,13 +134,15 @@ def _opcode(rest: str) -> str | None:
 
 _COMPUTATION = re.compile(r"^(?:ENTRY\s+)?%?([\w.\-]+)\s.*\{\s*$")
 _INSTRUCTION = re.compile(r"^\s+(?:ROOT\s+)?%?[\w.\-]+\s*=\s*(.*)$")
-_BOOKKEEPING = {"parameter", "constant", "tuple", "get-tuple-element", "bitcast"}
+# launch nothing themselves (a call's body is counted instead)
+_BOOKKEEPING = {"parameter", "constant", "tuple", "get-tuple-element", "bitcast", "call"}
 
 
 def hlo_op_counts(text: str) -> Counter:
-    """Op counts of the computations that launch work (the entry, loop bodies, branches) of a
-    compiled HLO module's text; the bodies of fusions and reducers (``calls=`` / ``to_apply=``)
-    and the ops that launch nothing (``_BOOKKEEPING``) are not counted."""
+    """Op counts of the computations that launch work (the entry, loop bodies, branches, ``call``
+    bodies such as XLA GPU command buffers) of a compiled HLO module's text. Not counted: the
+    bodies of fusions (``calls=``) and of reducers (``to_apply=`` of any op but ``call``: reduce,
+    scatter, sort, all-reduce, map), and the ops that launch nothing (``_BOOKKEEPING``)."""
     computations: dict[str, list[str]] = {}
     current = None
     for line in text.splitlines():
@@ -151,8 +153,12 @@ def hlo_op_counts(text: str) -> Counter:
             current = None
         elif current is not None and (instruction := _INSTRUCTION.match(line)):
             current.append(instruction.group(1))
-    nested = {name for body in computations.values() for rest in body
-              for name in re.findall(r"(?:calls|to_apply)=%?([\w.\-]+)", rest)}
+    nested = set()
+    for body in computations.values():
+        for rest in body:
+            nested.update(re.findall(r"\bcalls=%?([\w.\-]+)", rest))
+            if _opcode(rest) != "call":
+                nested.update(re.findall(r"\bto_apply=%?([\w.\-]+)", rest))
     return Counter(op for name, body in computations.items() if name not in nested
                    for op in map(_opcode, body) if op and op not in _BOOKKEEPING)
 

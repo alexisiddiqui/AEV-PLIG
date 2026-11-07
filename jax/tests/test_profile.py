@@ -126,3 +126,55 @@ def test_port_parity_join_and_verdict():
     _, summary = port_parity.compare(ours, by_row.iloc[:2])
     assert not summary["complete"] and not summary["truth_by_row"] and not summary["passed"]
     assert math.isfinite(summary["max_abs"])
+
+
+# A compiled GPU module in miniature: XLA's command-buffer pass moves a run of kernels into a
+# computation reached through call(...), to_apply=; fusion bodies (calls=) and reducers (to_apply= of
+# reduce / scatter) only describe the work of the instruction that names them.
+GPU_HLO = """HloModule jit_loss_and_grad, is_scheduled=true, entry_computation_layout={(f32[8,3]{1,0})->f32[]}
+
+%fused_computation (param_0: f32[8,3]) -> f32[8,3] {
+  %param_0 = f32[8,3]{1,0} parameter(0)
+  ROOT %tanh.0 = f32[8,3]{1,0} tanh(%param_0)
+}
+
+%fused_computation.1 (param_0.1: f32[8,3]) -> f32[8,3] {
+  %param_0.1 = f32[8,3]{1,0} parameter(0)
+  %constant.1 = f32[] constant(2)
+  %broadcast.1 = f32[8,3]{1,0} broadcast(%constant.1), dimensions={}
+  ROOT %multiply.0 = f32[8,3]{1,0} multiply(%param_0.1, %broadcast.1)
+}
+
+%region_0.1 (a: f32[], b: f32[]) -> f32[] {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add.1 = f32[] add(%a, %b)
+}
+
+%command_buffer (p0: f32[8,3], p1: f32[3,3]) -> (f32[8,3], f32[8,3]) {
+  %p0 = f32[8,3]{1,0} parameter(0)
+  %p1 = f32[3,3]{1,0} parameter(1)
+  %loop_tanh_fusion = f32[8,3]{1,0} fusion(%p0), kind=kLoop, calls=%fused_computation
+  %custom-call.1 = (f32[8,3]{1,0}, s8[4194304]{0}) custom-call(%loop_tanh_fusion, %p1), custom_call_target="__cublas$gemm", backend_config={"gemm_backend_config":{}}
+  %get-tuple-element.1 = f32[8,3]{1,0} get-tuple-element(%custom-call.1), index=0
+  %triton_gemm = f32[8,3]{1,0} fusion(%get-tuple-element.1, %p1), kind=kCustom, calls=%fused_computation.1, backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  ROOT %tuple.1 = (f32[8,3]{1,0}, f32[8,3]{1,0}) tuple(%triton_gemm, %get-tuple-element.1)
+}
+
+ENTRY %main.9 (x.1: f32[8,3], w.1: f32[3,3]) -> f32[] {
+  %x.1 = f32[8,3]{1,0} parameter(0)
+  %w.1 = f32[3,3]{1,0} parameter(1)
+  %call = (f32[8,3]{1,0}, f32[8,3]{1,0}) call(%x.1, %w.1), to_apply=%command_buffer
+  %get-tuple-element.2 = f32[8,3]{1,0} get-tuple-element(%call), index=0
+  %constant.2 = f32[] constant(0)
+  %loop_multiply_fusion = f32[8,3]{1,0} fusion(%get-tuple-element.2), kind=kLoop, calls=%fused_computation.1
+  ROOT %reduce.1 = f32[] reduce(%loop_multiply_fusion, %constant.2), dimensions={0,1}, to_apply=%region_0.1
+}
+"""
+
+
+def test_hlo_op_counts_command_buffer():
+    counts = profile.hlo_op_counts(GPU_HLO)
+    # the command buffer's kernels count; the call, the fusion bodies and the reducer do not
+    assert counts == {"fusion:kLoop": 2, "custom-call:__cublas$gemm": 1,
+                      "fusion:kCustom:__triton_gemm": 1, "reduce": 1}
