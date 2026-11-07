@@ -13,3 +13,5 @@ bindingdb: 8822 records, 3527445 pocket atoms, 2410 species 0 (0.07%)
 | bindingdb | C | 505 | 0 | 505 |
 | bindingdb | N | 247 | 0 | 247 |
 | bindingdb | O | 248 | 0 | 248 |
+| bindingdb | P | 28 | 0 | 28 |
+| bindingdb | H | 1382 | 0 | 1382 |
