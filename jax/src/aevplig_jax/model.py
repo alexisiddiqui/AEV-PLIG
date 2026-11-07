@@ -165,14 +165,16 @@ def _pool(h, node_graph, node_valid, n_graphs: int) -> jnp.ndarray:
     return jnp.concatenate([top, total / jnp.maximum(count, 1.0)], axis=1)
 
 
-def encode(params: dict, state: dict, batch, train: bool) -> tuple[jnp.ndarray, jnp.ndarray, dict]:
+def encode(params: dict, state: dict, batch, train: bool,
+           features=aev_features) -> tuple[jnp.ndarray, jnp.ndarray, dict]:
     """Node embeddings ``(ncap, heads*hidden)`` (zero on padded rows), graph embeddings
     ``(batch, 2*heads*hidden)`` and ``state`` with the node norms updated in training mode.
 
-    Each layer: ``gatv2_layer`` -> leaky_relu 0.01 -> masked BatchNorm over ``node_valid`` ->
-    ``* node_valid``.
+    ``features(batch)`` gives the ``(ncap, 367)`` node features (default: ``aev_features``, the
+    AEV on the fly). Each layer: ``gatv2_layer`` -> leaky_relu 0.01 -> masked BatchNorm over
+    ``node_valid`` -> ``* node_valid``.
     """
-    h = aev_features(batch)
+    h = features(batch)
     valid = jnp.asarray(batch.node_valid, jnp.float32)
     layer_states = []
     for p, running in zip(params["gat"], state["gat"]):
@@ -201,7 +203,9 @@ def readout(params: dict, state: dict, graph_emb, valid, train: bool) -> tuple[j
     return pred[:, 0], state
 
 
-def predict(params: dict, state: dict, batch, train: bool) -> tuple[jnp.ndarray, dict]:
-    """``(batch,)`` predictions in standardised units and the updated ``state``."""
-    _, graph_emb, state = encode(params, state, batch, train)
+def predict(params: dict, state: dict, batch, train: bool,
+            features=aev_features) -> tuple[jnp.ndarray, dict]:
+    """``(batch,)`` predictions in standardised units and the updated ``state``; ``features`` as in
+    ``encode``."""
+    _, graph_emb, state = encode(params, state, batch, train, features)
     return readout(params, state, graph_emb, batch.valid, train)

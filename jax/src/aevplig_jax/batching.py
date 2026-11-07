@@ -35,13 +35,13 @@ from __future__ import annotations
 
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 
-from aevplig_jax.constants import BATCH, EDGE_DIM, RC, RDKIT_DIM
+from aevplig_jax.constants import AEV_DIM, BATCH, EDGE_DIM, RC
 from aevplig_jax.pdb_atoms import typed_pairs
 from aevplig_jax.store import Record, Store
 
@@ -81,7 +81,7 @@ class Batch(NamedTuple):
     strips it before passing the batch to a jitted function.
     """
 
-    x_lig: np.ndarray  # (ncap, RDKIT_DIM) float32
+    x_lig: np.ndarray  # (ncap, RDKIT_DIM) float32; RDKIT_DIM + AEV_DIM with a precomputed table
     node_graph: np.ndarray  # (ncap,) int32, batch slot of the node; padded rows -> batch
     node_valid: np.ndarray  # (ncap,) float32
     nbr: np.ndarray  # (ncap, kb) int32, slot 0 = self
@@ -305,7 +305,7 @@ def _pad(items: list[Prepared], cap: Capacities, y_mean: float, y_sd: float) -> 
         n_nodes += n_lig
         n_env += n_typed
 
-    x_lig = np.zeros((cap.ncap, RDKIT_DIM), np.float32)
+    x_lig = np.zeros((cap.ncap, items[0].feat.shape[1]), np.float32)  # RDKIT_DIM, or + AEV_DIM
     lig_xyz = np.zeros((cap.ncap, 3), np.float32)
     x_lig[:n_nodes] = np.concatenate([item.feat for item in items])
     lig_xyz[:n_nodes] = np.concatenate([item.xyz for item in items])
@@ -344,23 +344,40 @@ def assemble(records: list[Record | Prepared], cap: Capacities, y_mean: float,
     return _pad([r if isinstance(r, Prepared) else prepare(r) for r in records], cap, y_mean, y_sd)
 
 
+def with_aev_columns(prepared: dict[str, Prepared],
+                     aev_table: dict[str, np.ndarray]) -> dict[str, Prepared]:
+    """Copies of ``prepared`` whose ``feat`` carries the record's precomputed AEV rows after the
+    RDKit columns, ``(L, RDKIT_DIM + AEV_DIM)``; every other array is shared."""
+    out = {}
+    for rid, item in prepared.items():
+        rows = aev_table[rid]
+        if rows.shape != (len(item.feat), AEV_DIM):
+            raise ValueError(f"{rid}: precomputed AEV rows {rows.shape}, expected "
+                             f"({len(item.feat)}, {AEV_DIM})")
+        out[rid] = replace(item, feat=np.concatenate([item.feat, rows.astype(np.float32)], axis=1))
+    return out
+
+
 class StoreSource:
     """``BatchSource`` over prepared records: ``load(spec)`` gathers the spec's ``Prepared`` records
     and pads them, with no store reads and no per-record work at batch time.
 
     ``prepared`` is a ``prepare_all`` result; when it is None the constructor builds it for ``ids``
-    (default: every store id) with ``workers`` processes. ``close`` drops the reference to it; the
-    store belongs to the caller.
+    (default: every store id) with ``workers`` processes. ``aev_table`` (id -> ``(L, AEV_DIM)``
+    rows, for the precomputed-AEV A/B) appends each record's AEV to its node features, so
+    ``x_lig`` is ``(ncap, RDKIT_DIM + AEV_DIM)``. ``close`` drops the reference to the prepared
+    records; the store belongs to the caller.
     """
 
     def __init__(self, store: Store, cap: Capacities, y_mean: float, y_sd: float, workers: int,
-                 prepared: dict[str, Prepared] | None = None, ids=None):
+                 prepared: dict[str, Prepared] | None = None, ids=None,
+                 aev_table: dict[str, np.ndarray] | None = None):
         self.store, self.cap = store, cap
         self.y_mean, self.y_sd = float(y_mean), float(y_sd)
         self.workers = int(workers)
         if prepared is None:
             prepared = prepare_all(store, store.ids if ids is None else ids, self.workers)
-        self.prepared = prepared
+        self.prepared = prepared if aev_table is None else with_aev_columns(prepared, aev_table)
 
     def load(self, spec: np.ndarray) -> Batch:
         return _pad([self.prepared[str(rid)] for rid in spec], self.cap, self.y_mean, self.y_sd)
