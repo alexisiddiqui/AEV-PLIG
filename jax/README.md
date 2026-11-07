@@ -18,7 +18,7 @@ Results: `docs/REPORT_reproduction.md`.
 | Path | Contents |
 |---|---|
 | `src/aevplig_jax/` | the package (modules below) |
-| `tests/` | CPU pytest suite (121 tests) and fixtures in `tests/data/`; tests marked `torch` skip when torch or torch_geometric is missing, RDKit-dependent tests skip without RDKit |
+| `tests/` | CPU pytest suite (153 tests) and fixtures in `tests/data/`; tests marked `torch` skip when torch or torch_geometric is missing, RDKit-dependent tests skip without RDKit |
 | `jobs/` | Isambard sbatch jobs and their helpers; `env.sh` exports the shared paths and flags |
 | `docs/` | `REPORT_reproduction.md`; `results/` holds the outputs fetched from Isambard |
 | `work/` | runtime outputs (store, output, cache, tmp); not tracked |
@@ -130,7 +130,7 @@ Logs: `store/logs/` for the store jobs, `output/logs/` for the rest. A seed's `b
 
 ```bash
 cd jax
-.venv/bin/pytest -p no:cacheprovider                # whole suite: 121 passed in about 45 s with torch
+.venv/bin/pytest -p no:cacheprovider                # whole suite: 153 passed in about 45 s with torch
 .venv/bin/pytest -p no:cacheprovider tests/test_aev.py -v
 ```
 
