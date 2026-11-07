@@ -2,6 +2,7 @@
 synthetic stores (CPU)."""
 
 import csv
+import hashlib
 import json
 import math
 import os
@@ -145,6 +146,17 @@ def test_run_precision_reads_every_seed_protocol(tmp_path):
     (run / "seed-2" / "protocol.json").write_text(json.dumps({"flags": {"precision": "default"}}))
     with pytest.raises(ValueError, match="disagree"):
         train.run_precision(run)
+
+
+def test_package_hashes_skip_dot_files(tmp_path, monkeypatch):
+    """macOS ``._*.py`` metadata files (tar without COPYFILE_DISABLE) are not package modules."""
+    for name, text in {"model.py": "x = 1\n", "._model.py": "junk", ".hidden.py": "junk",
+                       "notes.txt": "junk"}.items():
+        (tmp_path / name).write_text(text)
+    monkeypatch.setattr(train, "PACKAGE", tmp_path)
+    hashes = train.package_hashes()
+    assert list(hashes) == ["model.py"]
+    assert hashes["model.py"] == hashlib.sha256(b"x = 1\n").hexdigest()
 
 
 def test_selection_rule_window_of_eight():

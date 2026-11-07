@@ -138,8 +138,9 @@ def scaler(labels) -> tuple[float, float]:
 
 
 def package_hashes() -> dict[str, str]:
+    """sha256 of the package's modules; dot-prefixed names (macOS ``._*.py`` metadata) excluded."""
     return {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in sorted(PACKAGE.glob("*.py"))}
+            for path in sorted(PACKAGE.glob("[!.]*.py"))}
 
 
 def run_precision(run_dir: Path) -> str:
