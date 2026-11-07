@@ -1,0 +1,190 @@
+{
+ "jax": {
+  "onthefly": {
+   "aev": "onthefly",
+   "seed_index": 0,
+   "warmup_steps": 5,
+   "steps": 300,
+   "trace_steps": 20,
+   "first_step_seconds": 0.9433151959674433,
+   "step_seconds": {
+    "mean": 0.0061508472585895405,
+    "p50": 0.006149648979771882,
+    "p95": 0.006273881136439741,
+    "min": 0.005859816970769316,
+    "max": 0.0065433509880676866
+   },
+   "segment_seconds": 2.132131525024306,
+   "valid_seconds": 0.04788045602617785,
+   "steps_per_epoch": 748,
+   "epochs": 200,
+   "seconds_per_epoch": 5.363995058420114,
+   "minutes_per_seed": 17.879983528067047,
+   "wait_fraction": 0.0006248183589439888,
+   "loader": {
+    "batches": 300,
+    "elapsed_seconds": 2.132287617016118,
+    "startup_wait_seconds": 0.021615601028315723,
+    "steady_wait_seconds": 0.0013322924496605992,
+    "wait_fraction": 0.0006248183589439888,
+    "mean_assembly_seconds": 0.0050766756038259095,
+    "max_wait_seconds": 5.184032488614321e-06,
+    "flag_input_bound": false
+   },
+   "window": [
+    1794088661.8202984,
+    1794088663.952659
+   ],
+   "trace": {
+    "dir": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/profile/trace/onthefly",
+    "steps": 20,
+    "error": null
+   },
+   "op_summary": {
+    "source": "op counts of the compiled HLO of loss_and_grad (no times: xprof is not installed)",
+    "rows": [
+     [
+      "fusion:kInput",
+      104
+     ],
+     [
+      "fusion:kLoop",
+      103
+     ],
+     [
+      "fusion:kCustom:__triton",
+      21
+     ],
+     [
+      "fusion:kCustom:__triton_nested_gemm_fusion",
+      20
+     ],
+     [
+      "custom-call:__cublas$lt$matmul",
+      18
+     ]
+    ]
+   },
+   "devices": [
+    "cuda:0"
+   ],
+   "versions": {
+    "jax": "0.11.2",
+    "numpy": "2.5.3",
+    "python": "3.12.15"
+   },
+   "padding": {
+    "node": 0.207445963541667,
+    "env": 0.24404203869047614,
+    "aev": 0.9887500486512115
+   },
+   "capacities": {
+    "ncap": 5120,
+    "mcap": 14336,
+    "kb": 7,
+    "ka": 736,
+    "batch": 128
+   },
+   "manifest": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/timing/manifest.json"
+  },
+  "precomputed": {
+   "aev": "precomputed",
+   "seed_index": 0,
+   "warmup_steps": 5,
+   "steps": 300,
+   "trace_steps": 20,
+   "first_step_seconds": 1.9500491669750772,
+   "step_seconds": {
+    "mean": 0.005766579170400897,
+    "p50": 0.0057270835095550865,
+    "p95": 0.006006320816231892,
+    "min": 0.00552059302572161,
+    "max": 0.0065010160324163735
+   },
+   "segment_seconds": 2.0289043090306222,
+   "valid_seconds": 0.050949977012351155,
+   "steps_per_epoch": 748,
+   "epochs": 200,
+   "seconds_per_epoch": 5.1096847208620355,
+   "minutes_per_seed": 17.032282402873452,
+   "wait_fraction": 0.0006713062013228515,
+   "loader": {
+    "batches": 300,
+    "elapsed_seconds": 2.0290828000288457,
+    "startup_wait_seconds": 0.027843023010063916,
+    "steady_wait_seconds": 0.0013621358666568995,
+    "wait_fraction": 0.0006713062013228515,
+    "mean_assembly_seconds": 0.006066794632157931,
+    "max_wait_seconds": 6.0480087995529175e-06,
+    "flag_input_bound": false
+   },
+   "window": [
+    1794088677.9902055,
+    1794088680.0193508
+   ],
+   "trace": {
+    "dir": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/profile/trace/precomputed",
+    "steps": 20,
+    "error": null
+   },
+   "op_summary": {
+    "source": "op counts of the compiled HLO of loss_and_grad (no times: xprof is not installed)",
+    "rows": [
+     [
+      "fusion:kInput",
+      103
+     ],
+     [
+      "fusion:kLoop",
+      100
+     ],
+     [
+      "fusion:kCustom:__triton",
+      21
+     ],
+     [
+      "fusion:kCustom:__triton_nested_gemm_fusion",
+      19
+     ],
+     [
+      "custom-call:__cublas$lt$matmul",
+      18
+     ]
+    ]
+   },
+   "devices": [
+    "cuda:0"
+   ],
+   "versions": {
+    "jax": "0.11.2",
+    "numpy": "2.5.3",
+    "python": "3.12.15"
+   },
+   "padding": {
+    "node": 0.207445963541667,
+    "env": 0.24404203869047614,
+    "aev": 0.9887500486512115
+   },
+   "capacities": {
+    "ncap": 5120,
+    "mcap": 14336,
+    "kb": 7,
+    "ka": 736,
+    "batch": 128
+   },
+   "manifest": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/timing/manifest.json"
+  }
+ },
+ "seed": {
+  "run": "/scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/timing/seed-0",
+  "window": [
+   1794087230.0,
+   1794088061.0
+  ],
+  "wall_seconds": 831.0,
+  "epochs": 200,
+  "train_seconds": 790.9312101119431,
+  "valid_seconds": 9.390354041592218,
+  "wait_fraction": 0.0007320630728380883
+ }
+}

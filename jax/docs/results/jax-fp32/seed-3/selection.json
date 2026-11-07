@@ -1,0 +1,9 @@
+{
+ "epoch": 196,
+ "valid_pearson": 0.8112103302535563,
+ "selection_mean": 0.8097358279453439,
+ "window": 8,
+ "epochs": 200,
+ "test_pearson": 0.8856092663120038,
+ "test_rmse": 1.0632337343868357
+}

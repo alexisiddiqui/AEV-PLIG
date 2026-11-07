@@ -1,0 +1,3 @@
+set,join,n_ours,n_reference,n_compared,complete,truth_equal,truth_by_row,max_abs,mean_abs,worst,passed
+casf,unique_id,277,277,277,True,True,True,1.1910976248863392e-05,1.764621481277359e-06,2wnc,True
+fep,unique_id,1184,1184,1184,True,True,True,3.083927183755719e-05,1.402901895325512e-06,merck/pfkfb3_automap/39,True

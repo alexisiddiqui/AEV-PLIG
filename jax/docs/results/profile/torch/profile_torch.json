@@ -1,0 +1,104 @@
+{
+ "dataset": "pdbbind_U_bindingnet_U_bindingdb_ligsim90_fep_benchmark",
+ "seed_index": 0,
+ "seed": 100,
+ "batch": 128,
+ "epochs_timed": 3,
+ "steps_per_epoch": 748,
+ "load_seconds": 1.6957797409850173,
+ "loaders": {
+  "plain": {
+   "num_workers": 0,
+   "pin_memory": false,
+   "epochs": [
+    {
+     "train_seconds": 21.888783485046588,
+     "data_seconds": 8.87172206863761,
+     "valid_seconds": 0.40492369199637324,
+     "steps": 748,
+     "loss": 0.7405119846497092,
+     "valid_pearson": 0.6172155172462359
+    },
+    {
+     "train_seconds": 17.02804271201603,
+     "data_seconds": 4.192180015728809,
+     "valid_seconds": 0.11328442604281008,
+     "steps": 748,
+     "loss": 0.5288639596872107,
+     "valid_pearson": 0.6177095022422755
+    },
+    {
+     "train_seconds": 16.971965893986635,
+     "data_seconds": 4.204843819607049,
+     "valid_seconds": 0.11283560504671186,
+     "steps": 748,
+     "loss": 0.472934098387243,
+     "valid_pearson": 0.6619652233678728
+    }
+   ],
+   "seconds_per_epoch": 17.113064318546094,
+   "minutes_per_seed": 57.04354772848698,
+   "wait_fraction": 0.2469712267617889,
+   "window": [
+    1794087213.2091205,
+    1794087247.4362974
+   ]
+  },
+  "workers": {
+   "num_workers": 8,
+   "pin_memory": true,
+   "persistent_workers": true,
+   "epochs": [
+    {
+     "train_seconds": 14.645509854948614,
+     "data_seconds": 0.4907729303231463,
+     "valid_seconds": 0.25264255004003644,
+     "steps": 748,
+     "loss": 0.429823841338971,
+     "valid_pearson": 0.6957608930262095
+    },
+    {
+     "train_seconds": 14.559843543043826,
+     "data_seconds": 0.3551279011880979,
+     "valid_seconds": 0.09521149704232812,
+     "steps": 748,
+     "loss": 0.40087787718278506,
+     "valid_pearson": 0.682992753582841
+    },
+    {
+     "train_seconds": 14.502069998998195,
+     "data_seconds": 0.3449969359789975,
+     "valid_seconds": 0.09391258505638689,
+     "steps": 748,
+     "loss": 0.37992104469334403,
+     "valid_pearson": 0.6929928530645338
+    }
+   ],
+   "seconds_per_epoch": 14.625518812070368,
+   "minutes_per_seed": 48.75172937356789,
+   "wait_fraction": 0.02409080311089183,
+   "window": [
+    1794087329.1556396,
+    1794087358.4078555
+   ]
+  }
+ },
+ "profiler": {
+  "steps": 200,
+  "seconds": {
+   "data": 1.4769809072022326,
+   "forward": 3.0283978846273385,
+   "backward": 1.9375282531254925,
+   "optimiser": 0.3108979358803481
+  },
+  "table": "key_averages.txt"
+ },
+ "device": "NVIDIA GH200 120GB",
+ "versions": {
+  "torch": "2.6.0+cu126",
+  "torch_geometric": "2.5.3",
+  "python": "3.11.17"
+ },
+ "repo": "/projects/u6xq/hussain/opig-harness/src/AEV-PLIG-3ccac4b",
+ "cwd": "/lus/lfs1aip2/scratch/u6xq/hussain.u6xq/aevplig/work"
+}
