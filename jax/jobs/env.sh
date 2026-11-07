@@ -8,4 +8,5 @@ export PAIRED=$S/aevplig-paired/work
 export SBATCH_FLAGS="--partition=workq --gres=gpu:1 --cpus-per-task=72 --mem-per-cpu=2G --exclude=nid[010029,010033,010037,010038,010040,010063,010068,010078,010086,010148,010229,010241,010311,010639]"
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export JAX_COMPILATION_CACHE_DIR=$TREE/work/cache
+export TMPDIR=$TREE/work/tmp   # ptxas/XLA temp files; the node-local /local/user/<uid> is not writable on every node
 export PYTHONPATH=$TREE/src

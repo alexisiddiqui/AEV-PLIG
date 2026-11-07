@@ -19,6 +19,7 @@
 #SBATCH --output=/scratch/u6xq/hussain.u6xq/aevplig-jax/work/store/logs/%x-%j.out
 set -euo pipefail
 source /scratch/u6xq/hussain.u6xq/aevplig-jax/jobs/env.sh
+mkdir -p "$TMPDIR"; ulimit -c 0
 export PYTHONPATH=$TREE/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 STORE=$TREE/work/store
 LOGS=$STORE/logs

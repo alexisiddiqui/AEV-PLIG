@@ -29,6 +29,7 @@
 #SBATCH --output=/scratch/u6xq/hussain.u6xq/aevplig-jax/work/store/logs/%x-%j.out
 set -euo pipefail
 source /scratch/u6xq/hussain.u6xq/aevplig-jax/jobs/env.sh
+mkdir -p "$TMPDIR"; ulimit -c 0
 export PYTHONPATH=$TREE/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 RAW=$S/aevplig/raw
