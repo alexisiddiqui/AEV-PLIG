@@ -9,6 +9,13 @@ Parameters are nested dicts of float32 arrays:
   ``params["bn1"|"bn2"|"bn3"] = {"scale", "shift"}``;
 - ``params["heads"]``: reserved for later heads (``init_head``), empty here.
 
+Keys: the trunk draws ``split(key, layers + 4)``, which under partitionable threefry equals
+``fold_in(key, i)`` for ``i < layers + 4``. Every later branch therefore draws inside its own
+namespace, ``fold_in(fold_in(key, NS), salt)`` with a module constant ``NS`` at or above the
+trunk's split count: heads use ``HEADS_NS`` (``head_key``); a later branch such as a pocket
+encoder takes its own constant (e.g. ``POCKET_NS = HEADS_NS + 1``) the same way. The trunk's own
+draws are unchanged, so adding a branch never changes the trunk's initialisation.
+
 BatchNorm running statistics are a separate tree, ``state`` (``init_bn_state``), returned updated by
 every function that normalises in training mode. Initialisation matches the original at the
 distribution level: ``utils.init_weights`` puts Xavier normal on every ``weight`` outside BatchNorm,
@@ -31,6 +38,7 @@ from aevplig_jax.constants import (ACT_SLOPE, ATTN_SLOPE, BN_EPS, BN_MOMENTUM, D
 
 DENSE_NAMES = ("fc1", "fc2", "fc3", "out")  # widths DENSE, from 2 * heads * hidden
 NORM_NAMES = ("bn1", "bn2", "bn3")  # after fc1, fc2, fc3
+HEADS_NS = 1000  # key namespace of init_head; above the trunk's split count (LAYERS + 4 = 9)
 
 
 def _xavier_normal(key, fan_in: int, fan_out: int) -> jnp.ndarray:
@@ -72,6 +80,8 @@ def _gat(key, fan_in: int, edge_dim: int, hidden: int, heads: int) -> dict:
 def init_params(key, node_dim: int = NODE_DIM, edge_dim: int = EDGE_DIM, hidden: int = HIDDEN,
                 heads: int = HEADS, layers: int = LAYERS) -> dict:
     """The parameter tree; each GATv2 layer and each dense layer draws from its own split key."""
+    if layers + len(DENSE_NAMES) > HEADS_NS:
+        raise ValueError(f"{layers} layers: the trunk's keys would reach the heads' namespace")
     keys = jax.random.split(key, layers + len(DENSE_NAMES))
     width = heads * hidden
     params = {"gat": [_gat(keys[i], node_dim if i == 0 else width, edge_dim, hidden, heads)
@@ -93,11 +103,18 @@ def init_bn_state(layers: int = LAYERS) -> dict:
     return state
 
 
+def head_key(key, salt: int):
+    """The key of the head with ``salt``: ``fold_in(fold_in(key, HEADS_NS), salt)``, never one of
+    the trunk's keys (a plain ``fold_in(key, salt)`` equals the trunk's ``split`` key ``salt``)."""
+    return jax.random.fold_in(jax.random.fold_in(key, HEADS_NS), salt)
+
+
 def init_head(key, name: str, salt: int, shape: tuple[int, int]) -> dict:
     """``{name: {"w": shape, "b": (shape[1],)}}`` to merge into ``params["heads"]``, initialised
-    like the dense layers from ``fold_in(key, salt)``, so adding a head never changes the trunk."""
+    like the dense layers from ``head_key(key, salt)``, so adding a head never changes the trunk
+    and never copies one of its blocks."""
     fan_in, fan_out = shape
-    return {name: _dense(jax.random.fold_in(key, salt), fan_in, fan_out)}
+    return {name: _dense(head_key(key, salt), fan_in, fan_out)}
 
 
 def gatv2_layer(p: dict, x, nbr, nbr_mask, nbr_feat, heads: int, hidden: int) -> jnp.ndarray:

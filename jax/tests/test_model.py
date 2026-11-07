@@ -11,6 +11,7 @@ import pytest
 
 from aevplig_jax.aev import radial_aev_numpy
 from aevplig_jax.batching import Capacities, assemble, prepare
+from aevplig_jax import model
 from aevplig_jax.model import (aev_features, encode, gatv2_layer, init_bn_state, init_head,
                                init_params, masked_batchnorm, predict)
 from aevplig_jax.pdb_atoms import PocketArrays
@@ -138,13 +139,36 @@ def test_init_params_shapes_and_scales():
         np.testing.assert_array_equal(state[name]["mean"], np.zeros(width))
         np.testing.assert_array_equal(state[name]["var"], np.ones(width))
 
-    # A head comes from fold_in(key, salt): deterministic, salt-dependent, trunk untouched.
+    # A head comes from head_key(key, salt): deterministic, salt-dependent, trunk untouched.
     head = init_head(key, "aux", 7, (768, 2))
     assert set(head) == {"aux"} and head["aux"]["w"].shape == (768, 2)
     assert head["aux"]["b"].shape == (2,)
     assert_trees_close(head, init_head(key, "aux", 7, (768, 2)), atol=0)
     assert not np.allclose(head["aux"]["w"], init_head(key, "aux", 8, (768, 2))["aux"]["w"])
     assert_trees_close(init_params(key), params, atol=0)
+
+
+def test_head_keys_never_reuse_trunk_keys():
+    """Under partitionable threefry ``split(key, n)[s] == fold_in(key, s)``: a head drawn from
+    ``fold_in(key, salt)`` would copy the trunk block of index ``salt``. Heads live in their own
+    namespace, so no head key equals a trunk key and no head copies a dense layer."""
+    key = jax.random.PRNGKey(0)
+    trunk = jax.random.split(key, model.LAYERS + len(model.DENSE_NAMES))
+    trunk_data = {tuple(np.asarray(jax.random.key_data(k)).ravel()) for k in trunk}
+    assert len(trunk_data) == len(trunk)
+    for salt in range(17):
+        head = tuple(np.asarray(jax.random.key_data(model.head_key(key, salt))).ravel())
+        assert head not in trunk_data, salt
+    assert model.HEADS_NS >= len(trunk)
+
+    # Same shape as fc3 (trunk block 5 + 2 = 7) at salt 7: not a copy.
+    params = init_params(key)
+    head = init_head(key, "aux", 7, (512, 256))["aux"]["w"]
+    corr = np.corrcoef(np.asarray(head).ravel(), np.asarray(params["fc3"]["w"]).ravel())[0, 1]
+    assert abs(corr) < 0.05
+    # The head draws from head_key(key, salt).
+    want = model._dense(model.head_key(key, 7), 512, 256)
+    assert_trees_close(init_head(key, "aux", 7, (512, 256))["aux"], want, atol=0)
 
 
 @pytest.mark.torch
