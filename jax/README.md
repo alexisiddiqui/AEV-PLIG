@@ -11,7 +11,7 @@ Results: `docs/REPORT_reproduction.md`.
 - Store: 97,857 training-side, 1,184 FEP and 43 15-PGDH complexes; on-the-fly AEVs match the pickled features to 2.34e-5 on every record. Schema 2 adds each pocket atom's element and raw chain, resSeq and insertion code; training, prediction and the parity check refuse a store whose verification is missing, failed, partial or stale.
 - Weight port: the parent's PyTorch seed 0 run in JAX matches its PyTorch predictions to 3.08e-5 pK (CASF and FEP).
 - Ten seeds, strict float32: CASF 0.8921 / 1.043, FEP weighted PCC 0.5833, Kendall 0.4150 (design targets 0.892 / 1.041, 0.589 / 0.429), 22 min per seed. TF32: 0.8874 / 1.056, 0.5659 / 0.4013 (FEP outside the band), 14 min per seed.
-- Speed: 4.1x the PyTorch loop (13.8 vs 57.0 min per seed) in TF32, 2.6x in float32; the 10-min target is missed because the step is GPU-bound (kernels busy about 93% of it): mostly memory-bound fusions in the GAT layers, whose neighbour slots are 64% padding, with matrix multiplies about 29%. Launch gaps (about 7%), the loader (0.1% wait) and the AEV (4-7%) are not the limit.
+- Speed: 4.1x the PyTorch loop (13.8 vs 57.0 min per seed) in TF32, 2.6x in float32; the 10-min target is missed because the step is GPU-bound (kernels busy about 93% of it): by inference from the kernel kinds, mostly memory-bound fusions in the GAT layers, whose neighbour slots are 64% padding, with matrix multiplies about 29%. Launch gaps (about 7%), the loader (0.1% wait) and the AEV (4-7%) are not the limit.
 
 ## Layout
 
