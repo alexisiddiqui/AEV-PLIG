@@ -68,13 +68,54 @@ def _bfactor(field: str) -> float:
         return 0.0
 
 
+_SLACK = 1e-3  # A, added to the reach of the centroid prefilter (float64 error is ~1e-12 A)
+_BAND = 1e-6  # A^2, Gram distances this close to cutoff^2 are recomputed exactly (error ~1e-11)
+
+
+def _close_pairs(points: np.ndarray, centres: np.ndarray, cutoff: float,
+                 keep: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """``(centre_index, point_index)`` of every pair with ``sum((point - centre)**2) <= cutoff**2``
+    in float64 (inclusive), sorted by centre and then point; only points where ``keep`` is True
+    when it is given.
+
+    Vectorised: points farther than (largest centre distance + cutoff) from the centres' mean are
+    dropped (triangle inequality), squared distances to the rest come from the Gram form
+    ``|c|^2 + |p|^2 - 2 c.p`` on mean-centred coordinates, and pairs within ``_BAND`` of the cutoff
+    are recomputed with the expression above, so the decision is the same as a direct loop's.
+    """
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    centres = np.asarray(centres, dtype=np.float64).reshape(-1, 3)
+    if len(points) == 0 or len(centres) == 0:
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
+    middle = centres.mean(axis=0)
+    rel_c = centres - middle
+    norm_c = np.einsum("ij,ij->i", rel_c, rel_c)
+    rel_p = points - middle
+    norm_p = np.einsum("ij,ij->i", rel_p, rel_p)
+    reach = np.sqrt(norm_c.max()) + cutoff + _SLACK
+    close = norm_p <= reach * reach
+    near = np.flatnonzero(close if keep is None else close & keep)
+    d2 = (rel_c * -2.0) @ rel_p[near].T  # (C, near); scaling by -2 is exact
+    d2 += norm_c[:, None]
+    d2 += norm_p[near]
+    flat = np.flatnonzero(d2 <= cutoff * cutoff + _BAND)
+    centre_index, column = np.divmod(flat, len(near))
+    band = np.flatnonzero(d2.ravel()[flat] > cutoff * cutoff - _BAND)
+    if len(band):
+        exact = ((points[near[column[band]]] - centres[centre_index[band]]) ** 2).sum(axis=1)
+        outside = band[exact > cutoff**2]
+        if len(outside):
+            inside = np.ones(len(flat), dtype=bool)
+            inside[outside] = False
+            centre_index, column = centre_index[inside], column[inside]
+    return centre_index, near[column]
+
+
 def _within(points: np.ndarray, centres: np.ndarray, cutoff: float) -> np.ndarray:
     """True for each point within ``cutoff`` (inclusive) of at least one centre."""
-    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
-    nearest = np.full(len(points), np.inf)
-    for centre in np.asarray(centres, dtype=np.float64).reshape(-1, 3):
-        np.minimum(nearest, ((points - centre) ** 2).sum(axis=1), out=nearest)
-    return nearest <= cutoff**2
+    within = np.zeros(len(np.asarray(points).reshape(-1, 3)), dtype=bool)
+    within[_close_pairs(points, centres, cutoff)[1]] = True
+    return within
 
 
 def _read_atoms(pdb_path: Path) -> list[_Atom]:
@@ -135,8 +176,18 @@ def read_pocket(
     )
 
 
+def typed_pairs(pocket: PocketArrays, lig_xyz: np.ndarray, cutoff: float = RC
+                ) -> tuple[np.ndarray, np.ndarray]:
+    """``(ligand_index, pocket_index)`` of every typed pocket atom (species > 0) within ``cutoff``
+    (inclusive) of a ligand atom, sorted by ligand atom and then pocket atom: the radial-AEV pairs.
+    """
+    return _close_pairs(pocket.xyz, lig_xyz, cutoff, keep=pocket.species > 0)
+
+
 def typed_within(pocket: PocketArrays, lig_xyz: np.ndarray, cutoff: float = RC) -> np.ndarray:
     """Boolean over pocket atoms: typed (species > 0) and within ``cutoff`` (inclusive) of a ligand
     atom. This subset is what goes to the device for the radial AEV.
     """
-    return (pocket.species > 0) & _within(pocket.xyz, lig_xyz, cutoff)
+    within = np.zeros(len(pocket.species), dtype=bool)
+    within[typed_pairs(pocket, lig_xyz, cutoff)[1]] = True
+    return within

@@ -18,7 +18,9 @@ from aevplig_jax.pdb_atoms import (
     STANDARD_RESIDUES,
     PocketArrays,
     atom_name_table,
+    _within,
     read_pocket,
+    typed_pairs,
     typed_within,
 )
 
@@ -219,3 +221,77 @@ def test_empty_pocket(tmp_path, species):
         "END",
     ])
     _assert_layout(read_pocket(path, np.zeros((1, 3)), species), 0)
+
+
+def _within_loop(points, centres, cutoff):
+    """The original per-centre loop (Task 3), kept as the reference for the vectorised version."""
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    nearest = np.full(len(points), np.inf)
+    for centre in np.asarray(centres, dtype=np.float64).reshape(-1, 3):
+        np.minimum(nearest, ((points - centre) ** 2).sum(axis=1), out=nearest)
+    return nearest <= cutoff**2
+
+
+def _ulp_ring(cutoff):
+    """Points on the axes at exactly ``cutoff`` and one ulp either side, around the origin."""
+    ring = []
+    for axis in range(3):
+        for value in (cutoff, np.nextafter(cutoff, 0.0), np.nextafter(cutoff, 2 * cutoff),
+                      -cutoff, np.nextafter(-cutoff, 0.0)):
+            point = np.zeros(3)
+            point[axis] = value
+            ring.append(point)
+    return np.array(ring), np.zeros((1, 3))
+
+
+def _boundary_shell(rng, cutoff):
+    """600 points at distance ``cutoff`` (up to rounding) from one of four ligand atoms near
+    (40, 40, 40): the loop's float64 arithmetic puts some just inside and some just outside, and the
+    Gram form alone would decide about 1 in 40 of them differently."""
+    centres = rng.uniform(-3, 3, (4, 3)) + 40.0
+    directions = rng.normal(size=(600, 3))
+    directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+    return centres[rng.integers(0, 4, 600)] + cutoff * directions, centres
+
+
+def _within_cases():
+    rng = np.random.default_rng(3)
+    yield "boundary shell 5.1", *_boundary_shell(rng, 5.1), 5.1
+    yield "boundary shell 10", *_boundary_shell(rng, 10.0), 10.0
+    yield "pocket", rng.uniform(-10, 18, (1500, 3)).astype(np.float32), \
+        rng.uniform(0, 8, (30, 3)).astype(np.float32), 5.1
+    yield "radius 10", rng.uniform(-30, 40, (5000, 3)), rng.uniform(0, 8, (12, 3)), 10.0
+    yield "far coordinates", (rng.uniform(-10, 18, (800, 3)) + 950).astype(np.float32), \
+        (rng.uniform(0, 8, (20, 3)) + 950).astype(np.float32), 5.1
+    yield "large ligand", rng.uniform(-15, 35, (3000, 3)), rng.uniform(0, 20, (224, 3)), 5.1
+    yield "ulp ring 5.1", *_ulp_ring(5.1), 5.1
+    yield "ulp ring 10", *_ulp_ring(10.0), 10.0
+    yield "no centres", rng.uniform(0, 5, (7, 3)), np.zeros((0, 3)), 5.1
+    yield "no points", np.zeros((0, 3)), rng.uniform(0, 5, (4, 3)), 5.1
+
+
+@pytest.mark.parametrize(("name", "points", "centres", "cutoff"), list(_within_cases()),
+                         ids=[case[0] for case in _within_cases()])
+def test_within_matches_loop_reference(name, points, centres, cutoff):
+    got = _within(points, centres, cutoff)
+    assert got.dtype == bool and got.shape == (len(points),)
+    np.testing.assert_array_equal(got, _within_loop(points, centres, cutoff))
+
+
+def test_typed_pairs_are_the_typed_close_pairs_in_order(rng):
+    lig = rng.uniform(0, 8, (25, 3)).astype(np.float32)
+    xyz = rng.uniform(-10, 18, (900, 3)).astype(np.float32)
+    species_codes = rng.integers(0, 23, 900).astype(np.int8)
+    zeros = np.zeros(900)
+    pocket = PocketArrays(xyz=xyz, species=species_codes, res=zeros.astype(np.int32),
+                          resname=zeros.astype(np.int8), atom=zeros.astype(np.int16),
+                          chain=zeros.astype(np.int8), bfactor=zeros.astype(np.float16))
+    lig_index, pocket_index = typed_pairs(pocket, lig)
+    d2 = ((lig.astype(np.float64)[:, None] - xyz.astype(np.float64)[None]) ** 2).sum(axis=2)
+    want_lig, want_pocket = np.nonzero((d2 <= 5.1**2) & (species_codes[None] > 0))
+    np.testing.assert_array_equal(lig_index, want_lig)  # sorted by ligand atom, then pocket atom
+    np.testing.assert_array_equal(pocket_index, want_pocket)
+    mask = np.zeros(900, dtype=bool)
+    mask[pocket_index] = True
+    np.testing.assert_array_equal(typed_within(pocket, lig), mask)
+    assert [len(a) for a in typed_pairs(pocket, np.zeros((0, 3)))] == [0, 0]

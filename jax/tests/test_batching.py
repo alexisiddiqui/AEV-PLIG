@@ -12,7 +12,9 @@ import pytest
 
 from aevplig_jax import batching
 from aevplig_jax.aev import radial_aev_jax, radial_aev_numpy
-from aevplig_jax.batching import Batch, Capacities, StoreSource, assemble, capacities, plan_epoch
+from aevplig_jax.aev import neighbour_lists
+from aevplig_jax.batching import (Batch, Capacities, PreparedComplex, StoreSource, assemble,
+                                  capacities, plan_epoch, prepare)
 from aevplig_jax.loading import BatchSource, LoaderConfig, Prefetcher
 from aevplig_jax.pdb_atoms import PocketArrays, typed_within
 from aevplig_jax.rdkit_features import LigandArrays
@@ -175,6 +177,36 @@ def test_batch_aev_matches_per_complex_reference(rng):
     assert records[-1].id == "far"
     np.testing.assert_array_equal(batch.aev_mask[far], 0.0)
     assert np.all((batch.aev_nbr >= 0) & (batch.aev_nbr < cap.mcap))
+
+
+def test_prepare_matches_neighbour_lists_and_assembles_the_same(rng):
+    """Per-record preparation (what the StoreSource workers run): the AEV lists equal
+    ``neighbour_lists`` over the typed subset, and assembling prepared complexes, raw records or a
+    mix gives the same batch."""
+    records = random_records(rng, 6)
+    for record in records:
+        item = prepare(record)
+        assert isinstance(item, PreparedComplex) and item.id == record.id
+        typed = typed_within(record.pocket, record.lig.xyz)
+        np.testing.assert_array_equal(item.env_xyz, record.pocket.xyz[typed])
+        np.testing.assert_array_equal(item.env_species, record.pocket.species[typed])
+        assert item.env_species.dtype == np.int32
+        if typed.any():
+            nbr, mask = neighbour_lists(record.lig.xyz, record.pocket.xyz[typed])
+            np.testing.assert_array_equal(item.aev_mask, mask)
+            np.testing.assert_array_equal(item.aev_nbr, np.where(mask, nbr, 0))
+        else:
+            assert item.aev_nbr.shape == (len(record.lig.xyz), 0)
+        degree = np.bincount(record.lig.bond_dst, minlength=len(record.lig.xyz))
+        assert item.nbr.shape == (len(record.lig.xyz), 1 + degree.max(initial=0))
+        np.testing.assert_array_equal(item.nbr_mask.sum(axis=1), 1 + degree)
+    cap = Capacities(ncap=256, mcap=2048, kb=32, ka=320, batch=8)
+    want = assemble(records, cap, y_mean=6.0, y_sd=2.0)
+    mixed = [prepare(r) if i % 2 else r for i, r in enumerate(records)]
+    for items in ([prepare(r) for r in records], mixed):
+        got = assemble(items, cap, y_mean=6.0, y_sd=2.0)
+        for name in Batch._fields:
+            np.testing.assert_array_equal(getattr(got, name), getattr(want, name), err_msg=name)
 
 
 def _two_records():

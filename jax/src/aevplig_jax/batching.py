@@ -12,15 +12,20 @@ A ``Batch`` has static shapes set by ``Capacities``, so one compiled variant ser
   with mask 0.
 - environment: per complex the typed pocket atoms within ``RC`` of its ligand (``typed_within``),
   concatenated (``mcap`` rows); ``aev_nbr``/``aev_mask`` list, per ligand atom, the environment
-  rows within ``RC`` (``ka`` slots) as indices into the concatenated arrays. Unused slots point at
-  environment row 0 with mask 0.
+  rows within ``RC`` (``ka`` slots) as indices into the concatenated arrays, in the form
+  ``aev.neighbour_lists`` gives (ascending, padded). Unused slots point at environment row 0 with
+  mask 0.
 - spread padding (jax-Ka): padded node rows copy real rows (row ``i`` copies row ``i mod n``, lists
   included) with ``node_valid = 0`` and ``node_graph = batch`` (the dump segment); padded
   environment rows copy real environment rows; padded batch slots have ``y = 0``, ``valid = 0``
   and no nodes.
 
-Imports numpy, the standard library and package modules (scipy via ``aev.neighbour_lists``); no jax.
-Arrays stay on the host: ``Prefetcher``'s ``to_device`` hook does the device transfer.
+Work is split in two: ``prepare`` builds one complex's local arrays (typed subset and AEV lists from
+one ``typed_pairs`` pass, bond lists and self-loop features) and runs in the ``StoreSource`` worker
+threads; ``assemble`` checks capacities, offsets and concatenates the prepared complexes and pads.
+
+Imports numpy, the standard library and package modules; no jax. Arrays stay on the host:
+``Prefetcher``'s ``to_device`` hook does the device transfer.
 """
 
 from __future__ import annotations
@@ -31,9 +36,8 @@ from typing import NamedTuple
 
 import numpy as np
 
-from aevplig_jax.aev import neighbour_lists
 from aevplig_jax.constants import BATCH, EDGE_DIM, RC, RDKIT_DIM
-from aevplig_jax.pdb_atoms import typed_within
+from aevplig_jax.pdb_atoms import typed_pairs
 from aevplig_jax.store import Record, Store
 
 NODE_QUANTUM = 256  # ncap is a multiple of this
@@ -133,24 +137,72 @@ def capacities(store: Store, ids: np.ndarray, seeds: list[int], epochs: int,
                       ka=_round_up(store.dims[:, 4].max(initial=0), KA_QUANTUM), batch=batch)
 
 
-def _bond_lists(src: np.ndarray, dst: np.ndarray, bond_type: np.ndarray, ncap: int,
-                kb: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """``nbr``, ``nbr_mask``, ``nbr_feat`` of the bond graph (global node indices)."""
-    nbr = np.tile(np.arange(ncap, dtype=np.int32)[:, None], (1, kb))
-    nbr_mask = np.zeros((ncap, kb), np.float32)
-    nbr_feat = np.zeros((ncap, kb, EDGE_DIM), np.float32)
-    order = np.argsort(dst, kind="stable")  # group by destination, edge order within a group
-    src, dst, bond_type = src[order], dst[order], bond_type[order]
-    degree = np.bincount(dst, minlength=ncap)
-    slot = np.arange(len(dst)) - (np.cumsum(degree) - degree)[dst] + 1
-    nbr[dst, slot] = src
-    nbr_mask[dst, slot] = 1.0
-    nbr_feat[dst, slot] = bond_type
-    incoming = np.zeros((ncap, EDGE_DIM), np.float32)
-    np.add.at(incoming, dst, bond_type)
-    nbr_mask[:, 0] = 1.0
-    nbr_feat[:, 0] = incoming / np.maximum(degree, 1).astype(np.float32)[:, None]
-    return nbr, nbr_mask, nbr_feat
+class PreparedComplex(NamedTuple):
+    """One complex's arrays in local indices, ready for ``assemble``.
+
+    ``nbr*`` have ``1 + largest in-degree`` slots (slot 0 = self, unused slots = self with mask 0);
+    ``aev_*`` have as many slots as the most typed neighbours of one ligand atom (unused = 0, mask
+    0) and index ``env_*``.
+    """
+
+    id: str
+    label: float
+    feat: np.ndarray  # (L, RDKIT_DIM) float32
+    xyz: np.ndarray  # (L, 3) float32
+    nbr: np.ndarray  # (L, Wb) int32
+    nbr_mask: np.ndarray  # (L, Wb) float32
+    nbr_feat: np.ndarray  # (L, Wb, EDGE_DIM) float32
+    env_xyz: np.ndarray  # (A, 3) float32
+    env_species: np.ndarray  # (A,) int32
+    aev_nbr: np.ndarray  # (L, Wa) int32
+    aev_mask: np.ndarray  # (L, Wa) float32
+
+
+def _packed(groups: np.ndarray, counts: np.ndarray, width: int, first: int = 0) -> np.ndarray:
+    """Flat positions in a C-ordered ``(len(counts), width)`` array that pack each group's entries
+    to the left from slot ``first`` (``groups`` sorted ascending, ``counts`` per group)."""
+    return groups * width + np.arange(len(groups)) - (np.cumsum(counts) - counts)[groups] + first
+
+
+def _filled(counts: np.ndarray, width: int) -> np.ndarray:
+    """Mask of left-packed rows holding ``counts`` entries, float32 ``(len(counts), width)``."""
+    return (np.arange(width) < counts[:, None]).astype(np.float32)
+
+
+def prepare(record: Record) -> PreparedComplex:
+    """Local arrays of one complex: the bond graph as neighbour lists with the self-loop feature
+    (mean of incoming bond features, zeros when isolated) and the typed environment with its AEV
+    lists, both from one ``typed_pairs`` pass.
+    """
+    lig = record.lig
+    n_lig = len(lig.xyz)
+    degree = np.bincount(lig.bond_dst, minlength=n_lig)
+    width = 1 + int(degree.max(initial=0))
+    nbr = np.repeat(np.arange(n_lig, dtype=np.int32)[:, None], width, axis=1)
+    nbr_feat = np.zeros((n_lig, width, EDGE_DIM), np.float32)
+    if len(lig.bond_dst):
+        order = np.argsort(lig.bond_dst, kind="stable")  # by destination, edge order within
+        dst = lig.bond_dst[order]
+        flat = _packed(dst, degree, width, first=1)
+        nbr.ravel()[flat] = lig.bond_src[order]
+        nbr_feat.reshape(-1, EDGE_DIM)[flat] = lig.bond_type[order]
+        incoming = nbr_feat[:, 1:].sum(axis=1)  # exact: sums of one-hot rows
+        nbr_feat[:, 0] = incoming / np.maximum(degree, 1).astype(np.float32)[:, None]
+
+    lig_index, pocket_index = typed_pairs(record.pocket, lig.xyz, cutoff=RC)
+    typed = np.zeros(len(record.pocket.xyz), dtype=bool)
+    typed[pocket_index] = True
+    env_rows = np.flatnonzero(typed)  # the typed_within subset, in pocket order
+    env_rank = np.cumsum(typed, dtype=np.int32) - 1  # pocket row -> environment row
+    counts = np.bincount(lig_index, minlength=n_lig)
+    width_a = int(counts.max(initial=0))
+    aev_nbr = np.zeros((n_lig, width_a), np.int32)
+    aev_nbr.ravel()[_packed(lig_index, counts, width_a)] = env_rank[pocket_index]
+    return PreparedComplex(id=record.id, label=record.label, feat=lig.feat, xyz=lig.xyz, nbr=nbr,
+                           nbr_mask=_filled(1 + degree, width), nbr_feat=nbr_feat,
+                           env_xyz=record.pocket.xyz[env_rows],
+                           env_species=record.pocket.species[env_rows].astype(np.int32),
+                           aev_nbr=aev_nbr, aev_mask=_filled(counts, width_a))
 
 
 def _spread(n_real: int, arrays: tuple[np.ndarray, ...]) -> None:
@@ -160,70 +212,74 @@ def _spread(n_real: int, arrays: tuple[np.ndarray, ...]) -> None:
         array[rows] = array[rows % n_real]
 
 
-def assemble(records: list[Record], cap: Capacities, y_mean: float, y_sd: float) -> Batch:
-    """Pack ``records`` into one padded ``Batch``; ``y = (label - y_mean) / y_sd`` on real slots.
+def assemble(records: list[Record | PreparedComplex], cap: Capacities, y_mean: float,
+             y_sd: float) -> Batch:
+    """Pack complexes into one padded ``Batch``; ``y = (label - y_mean) / y_sd`` on real slots.
 
-    Raises ``ValueError`` naming the complex when it would exceed a capacity (batch slots, ``ncap``,
-    ``mcap``, a node in-degree over ``kb - 1``, a ligand atom with more than ``ka`` typed
-    neighbours) or has no ligand atoms; nothing is truncated.
+    Takes prepared complexes (``StoreSource`` prepares them in its workers) or raw records, which
+    are prepared here. Raises ``ValueError`` naming the complex when it would exceed a capacity
+    (batch slots, ``ncap``, ``mcap``, an in-degree over ``kb - 1``, a ligand atom with more than
+    ``ka`` typed neighbours) or has no ligand atoms; nothing is truncated.
     """
     if not records:
         raise ValueError("no records to assemble")
     if len(records) > cap.batch:
         raise ValueError(f"{records[cap.batch].id}: {len(records)} complexes exceed batch "
                          f"{cap.batch}")
-    x_lig = np.zeros((cap.ncap, RDKIT_DIM), np.float32)
-    lig_xyz = np.zeros((cap.ncap, 3), np.float32)
-    node_graph = np.full(cap.ncap, cap.batch, np.int32)
-    node_valid = np.zeros(cap.ncap, np.float32)
+    items = [r if isinstance(r, PreparedComplex) else prepare(r) for r in records]
+    nbr = np.repeat(np.arange(cap.ncap, dtype=np.int32)[:, None], cap.kb, axis=1)
+    nbr_mask = np.zeros((cap.ncap, cap.kb), np.float32)
+    nbr_feat = np.zeros((cap.ncap, cap.kb, EDGE_DIM), np.float32)
     aev_nbr = np.zeros((cap.ncap, cap.ka), np.int32)
     aev_mask = np.zeros((cap.ncap, cap.ka), np.float32)
-    env_xyz = np.zeros((cap.mcap, 3), np.float32)
-    env_species = np.zeros(cap.mcap, np.int32)
-    y = np.zeros(cap.batch, np.float32)
-    valid = np.zeros(cap.batch, np.float32)
-    bond_src, bond_dst, bond_type = [], [], []
+    sizes = np.zeros(len(items), np.int64)
     n_nodes = n_env = 0
-    for slot, record in enumerate(records):
-        lig, rid = record.lig, record.id
-        n_lig = len(lig.xyz)
+    for slot, item in enumerate(items):  # checks and the variable-width lists
+        n_lig, n_typed = len(item.xyz), len(item.env_xyz)
+        width_b, width_a = item.nbr.shape[1], item.aev_nbr.shape[1]
         if n_lig == 0:
-            raise ValueError(f"{rid}: ligand has no atoms")
+            raise ValueError(f"{item.id}: ligand has no atoms")
         if n_nodes + n_lig > cap.ncap:
-            raise ValueError(f"{rid}: ligand atoms reach {n_nodes + n_lig}, over ncap {cap.ncap}")
-        typed = typed_within(record.pocket, lig.xyz, cutoff=RC)
-        n_typed = int(typed.sum())
+            raise ValueError(f"{item.id}: ligand atoms reach {n_nodes + n_lig}, over ncap "
+                             f"{cap.ncap}")
         if n_env + n_typed > cap.mcap:
-            raise ValueError(f"{rid}: environment atoms reach {n_env + n_typed}, over mcap "
+            raise ValueError(f"{item.id}: environment atoms reach {n_env + n_typed}, over mcap "
                              f"{cap.mcap}")
-        degree = int(np.bincount(lig.bond_dst).max(initial=0))
-        if degree > cap.kb - 1:
-            raise ValueError(f"{rid}: a ligand atom has {degree} incoming bonds, over kb - 1 = "
-                             f"{cap.kb - 1}")
-        nodes = slice(n_nodes, n_nodes + n_lig)
+        if width_b > cap.kb:
+            raise ValueError(f"{item.id}: a ligand atom has {width_b - 1} incoming bonds, over "
+                             f"kb - 1 = {cap.kb - 1}")
+        if width_a > cap.ka:
+            raise ValueError(f"{item.id}: a ligand atom has {width_a} typed neighbours within "
+                             f"{RC} A, over ka = {cap.ka}")
+        rows = slice(n_nodes, n_nodes + n_lig)
+        nbr[rows, :width_b] = item.nbr + n_nodes
+        nbr_mask[rows, :width_b] = item.nbr_mask
+        nbr_feat[rows, :width_b] = item.nbr_feat
         if n_typed:
-            try:
-                nbr, mask = neighbour_lists(lig.xyz, record.pocket.xyz[typed], cutoff=RC, k=cap.ka)
-            except ValueError as err:
-                raise ValueError(f"{rid}: {err}") from err
-            aev_nbr[nodes] = np.where(mask, nbr + n_env, 0)
-            aev_mask[nodes] = mask
-            env_xyz[n_env:n_env + n_typed] = record.pocket.xyz[typed]
-            env_species[n_env:n_env + n_typed] = record.pocket.species[typed]
-        x_lig[nodes] = lig.feat
-        lig_xyz[nodes] = lig.xyz
-        node_graph[nodes] = slot
-        node_valid[nodes] = 1.0
-        bond_src.append(lig.bond_src + n_nodes)
-        bond_dst.append(lig.bond_dst + n_nodes)
-        bond_type.append(lig.bond_type)
-        y[slot] = (record.label - y_mean) / y_sd
-        valid[slot] = 1.0
+            aev_nbr[rows, :width_a] = np.where(item.aev_mask > 0, item.aev_nbr + n_env, 0)
+            aev_mask[rows, :width_a] = item.aev_mask
+        sizes[slot] = n_lig
         n_nodes += n_lig
         n_env += n_typed
 
-    nbr, nbr_mask, nbr_feat = _bond_lists(np.concatenate(bond_src), np.concatenate(bond_dst),
-                                          np.concatenate(bond_type), cap.ncap, cap.kb)
+    x_lig = np.zeros((cap.ncap, RDKIT_DIM), np.float32)
+    lig_xyz = np.zeros((cap.ncap, 3), np.float32)
+    x_lig[:n_nodes] = np.concatenate([item.feat for item in items])
+    lig_xyz[:n_nodes] = np.concatenate([item.xyz for item in items])
+    node_graph = np.full(cap.ncap, cap.batch, np.int32)
+    node_graph[:n_nodes] = np.repeat(np.arange(len(items), dtype=np.int32), sizes)
+    node_valid = np.zeros(cap.ncap, np.float32)
+    node_valid[:n_nodes] = 1.0
+    env_xyz = np.zeros((cap.mcap, 3), np.float32)
+    env_species = np.zeros(cap.mcap, np.int32)
+    if n_env:
+        env_xyz[:n_env] = np.concatenate([item.env_xyz for item in items])
+        env_species[:n_env] = np.concatenate([item.env_species for item in items])
+    y = np.zeros(cap.batch, np.float32)
+    y[:len(items)] = (np.array([item.label for item in items]) - y_mean) / y_sd
+    valid = np.zeros(cap.batch, np.float32)
+    valid[:len(items)] = 1.0
+
     _spread(n_nodes, (x_lig, lig_xyz, nbr, nbr_mask, nbr_feat, aev_nbr, aev_mask))
     if n_env:  # with no environment atoms the rows stay zero (species 0 contributes nothing)
         _spread(n_env, (env_xyz, env_species))
@@ -234,9 +290,9 @@ def assemble(records: list[Record], cap: Capacities, y_mean: float, y_sd: float)
 
 
 class StoreSource:
-    """``BatchSource`` over a ``Store``: ``load(spec)`` fetches the spec's records in a thread pool
-    (``Store.get`` is thread-safe) and assembles them. ``close`` releases the pool; the store
-    belongs to the caller.
+    """``BatchSource`` over a ``Store``: ``load(spec)`` fetches and prepares the spec's records in a
+    thread pool (``Store.get`` is thread-safe) and assembles them. ``close`` releases the pool; the
+    store belongs to the caller.
     """
 
     def __init__(self, store: Store, cap: Capacities, y_mean: float, y_sd: float, workers: int):
@@ -245,9 +301,12 @@ class StoreSource:
         self.workers = int(workers)
         self._pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="store")
 
+    def _prepared(self, rid: str) -> PreparedComplex:
+        return prepare(self.store.get(rid))
+
     def load(self, spec: np.ndarray) -> Batch:
-        records = list(self._pool.map(self.store.get, [str(rid) for rid in spec]))
-        return assemble(records, self.cap, self.y_mean, self.y_sd)
+        items = list(self._pool.map(self._prepared, [str(rid) for rid in spec]))
+        return assemble(items, self.cap, self.y_mean, self.y_sd)
 
     def close(self) -> None:
         self._pool.shutdown(wait=True)
