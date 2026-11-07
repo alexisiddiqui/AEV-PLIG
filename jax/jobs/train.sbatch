@@ -4,6 +4,7 @@
 #   mkdir -p /scratch/u6xq/hussain.u6xq/aevplig-jax/work/output/logs
 #   full ensemble:  sbatch /scratch/u6xq/hussain.u6xq/aevplig-jax/jobs/train.sbatch
 #   other tag/len:  sbatch --array=0 --export=ALL,TAG=jax-short,EPOCHS=20 .../jobs/train.sbatch
+#   strict float32: sbatch --export=ALL,TAG=jax-fp32,PRECISION=highest .../jobs/train.sbatch
 # Outputs under $TREE/work/output: $TAG/manifest.json (shared by the seeds), $TAG/seed-<i>/{protocol.json,
 #   history.jsonl, selection.json, test_predictions.csv, checkpoints/{best,latest}/state.npz} and
 #   predictions/${TAG}_pdbbind_U_bindingnet_U_bindingdb_ligsim90_fep_benchmark_test_seed<i>.csv.
@@ -29,5 +30,5 @@ echo "[train] $(date -Is) task ${SLURM_ARRAY_TASK_ID} tag $TAG epochs $EPOCHS on
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 "$JAX_PY" -m aevplig_jax.train --store-root "$TREE/work/store" --tag "$TAG" \
   --seed-index "$SLURM_ARRAY_TASK_ID" --epochs "$EPOCHS" --out "$TREE/work/output" \
-  --workers 15 --prefetch 4 --prepare-workers 12
+  --workers 15 --prefetch 4 --prepare-workers 12 ${PRECISION:+--precision "$PRECISION"}
 echo "[train] done $(date -Is)"
