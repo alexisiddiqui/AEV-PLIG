@@ -7,8 +7,12 @@
 #   sbatch /scratch/u6xq/hussain.u6xq/aevplig-jax/jobs/profile_jax.sbatch
 #   profiles only:  sbatch --export=ALL,SKIP_SEED=1 .../jobs/profile_jax.sbatch   (no full seed; profile.json keeps
 #                   the earlier seed row and gpu_util.txt is appended to, so its utilisation still renders)
+#   Each profile mode summarises its new trace's GPU kernels (time by kernel, family and HLO module, GPU busy share of
+#   the traced window) into trace/<mode>/kernels.csv, its profile.json row and REPORT.md, and prints the tables here.
+#   Profiling runs XLA op by op; to trace with command buffers on, add
+#   XLA_FLAGS=--xla_enable_command_buffers_during_profiling=true to --export.
 # Outputs in $TREE/work/output/profile: profile.json, REPORT.md (the PyTorch rows come from torch/profile_torch.json
-#   when profile_torch.sbatch has finished), gpu_util.txt, trace/{onthefly,precomputed}/; the AEV table
+#   when profile_torch.sbatch has finished), gpu_util.txt, trace/{onthefly,precomputed}/ (with kernels.csv); the AEV table
 #   $TREE/work/output/aev_trainside.npz; the timing run $TREE/work/output/timing/ (manifest.json written by the first
 #   profile and reused by the seed; seed-0/ is removed and rerun on every submission without SKIP_SEED=1).
 #SBATCH --job-name=aj-prof-jax

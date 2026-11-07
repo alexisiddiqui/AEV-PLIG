@@ -6,6 +6,7 @@
         [--prepare-workers 12]
     python -m aevplig_jax.profile --out DIR --seed-run SEED_DIR --seed-window START END
     python -m aevplig_jax.profile --out DIR
+    python -m aevplig_jax.profile --trace-summary TRACE_DIR --out DIR [--trace-steps 20]
 
 Profiling (first form) builds, with train.py's functions, what train.py builds: the trainside
 splits, the prepared records, the manifest (``--manifest``; ``load_or_write_manifest`` writes it
@@ -19,7 +20,15 @@ on the parameters) with that segment's loader telemetry, then ``--trace-steps`` 
 timed after a compiling one. Seconds per epoch = steps per epoch x the timed wall per step + the
 validation pass. Padding over the timed batches: node rows (``1 - node_valid.mean()``), environment
 rows (``1 - real rows / mcap``), AEV-list slots (``1 - real neighbours / (ncap * ka)``, i.e.
-``aev_mask`` over the real rows: spread padding copies masks into padded rows). Op summary: the top
+``aev_mask`` over the real rows: spread padding copies masks into padded rows), GAT-list slots
+(``gat``: ``1 - real slots / (ncap * kb)``, a real row using its in-degree plus the self-loop; the
+share of the per-layer ``(ncap, kb, heads, hidden)`` gather that is masked) and the GAT slot fill
+``gat_fill`` (``nbr_mask.mean()`` over the real rows). Kernel summary (``trace_kernels``): the
+perfetto trace's GPU kernel events (``ph == "X"`` on the stream lines of the ``/device:GPU``
+processes; derived lines such as "XLA Ops" repeat kernels and are left out), time summed by kernel
+name, by family (instance numbers stripped) and by HLO module over the trace window, with the GPU
+busy share of that window (union of the kernel intervals); ``<out>/trace/<aev>/kernels.csv`` holds
+every kernel and the row the top ``TOP_KERNELS``. Op summary, the static fallback: the top
 ``TOP_OPS`` ops by device time from the trace's ``.xplane.pb`` when ``xprof`` (or
 ``tensorboard_plugin_profile``) imports, else op counts of the compiled HLO of ``loss_and_grad``.
 The row goes to ``<out>/profile.json`` under ``jax.<aev>``.
@@ -28,7 +37,13 @@ The row goes to ``<out>/profile.json`` under ``jax.<aev>``.
 around the run, epoch seconds) under ``seed``. Every form then rewrites ``<out>/REPORT.md`` from
 ``profile.json``, the PyTorch profile ``<out>/torch/profile_torch.json`` when present
 (``jobs/profile_torch.py``) and the GPU utilisation in each row's window from the
-``nvidia-smi dmon -s u -o DT`` logs ``<out>/gpu_util.txt`` and ``<out>/torch/gpu_util.txt``.
+``nvidia-smi dmon -s u -o DT`` logs ``<out>/gpu_util.txt`` and ``<out>/torch/gpu_util.txt``. The
+report's conclusion on where the time goes is ``profile.json``'s ``diagnosis`` (written by hand
+from the measured tables, then re-rendered with the third form); until then it reads "pending the
+per-kernel table".
+
+``--trace-summary`` summarises an existing trace directory (``--trace-steps`` traced steps) into
+``<out>/kernels.csv`` and ``<out>/kernels.json`` and prints the tables; no report is written.
 
 Imports jax, numpy, the standard library and package modules.
 """
@@ -36,6 +51,8 @@ Imports jax, numpy, the standard library and package modules.
 from __future__ import annotations
 
 import argparse
+import csv
+import gzip
 import json
 import math
 import os
@@ -64,6 +81,14 @@ GPU_UTIL = "gpu_util.txt"
 TORCH_DIR = "torch"
 TORCH_JSON = "profile_torch.json"
 TOP_OPS = 15
+TOP_KERNELS = 15
+PERFETTO = "perfetto_trace.json.gz"  # jax.profiler.trace(create_perfetto_trace=True)
+KERNELS_CSV = "kernels.csv"
+KERNELS_JSON = "kernels.json"
+PENDING = "pending the per-kernel table"
+# GPU trace lines derived from the kernels (they repeat kernel time) or not kernels at all
+DERIVED_LINES = ("XLA Modules", "XLA Ops", "XLA TraceMe", "Steps", "Framework", "TensorFlow",
+                 "Source code", "Launch Stats")
 LABELS = {"onthefly": "JAX on-the-fly", "precomputed": "JAX precomputed"}
 # design G4 / G5: minutes per seed, speed-up over PyTorch, loader wait, node padding, AEV overhead
 TARGET_MINUTES, TARGET_SPEEDUP = 10, 5
@@ -82,15 +107,22 @@ def step_plans(train_ids: np.ndarray, seed: int, count: int) -> list[np.ndarray]
 
 
 def padding_fractions(prepared: dict[str, Prepared], specs, cap: Capacities) -> dict[str, float]:
-    """Mean padded share over ``specs`` of the node rows, environment rows and AEV-list slots."""
-    node = env = aev = 0.0
+    """Mean padded share over ``specs`` of the node rows, environment rows, AEV-list slots and
+    GAT-list slots (``gat``), and the GAT slot fill of the real rows (``gat_fill``,
+    ``nbr_mask.mean()`` over them: in-degree plus the self-loop over ``kb``)."""
+    node = env = aev = gat = fill = 0.0
     for spec in specs:
         items = [prepared[str(rid)] for rid in spec]
-        node += sum(len(item.xyz) for item in items) / cap.ncap
+        rows = sum(len(item.xyz) for item in items)
+        slots = sum(int(item.degree.sum()) + len(item.degree) for item in items)
+        node += rows / cap.ncap
         env += sum(len(item.env_xyz) for item in items) / cap.mcap
         aev += sum(int(item.aev_count.sum()) for item in items) / (cap.ncap * cap.ka)
+        gat += slots / (cap.ncap * cap.kb)
+        fill += slots / (max(rows, 1) * cap.kb)
     n = len(specs)
-    return {"node": 1.0 - node / n, "env": 1.0 - env / n, "aev": 1.0 - aev / n}
+    return {"node": 1.0 - node / n, "env": 1.0 - env / n, "aev": 1.0 - aev / n,
+            "gat": 1.0 - gat / n, "gat_fill": fill / n}
 
 
 def _segment(step, state, source, specs, config: LoaderConfig) -> tuple[tuple, dict]:
@@ -202,6 +234,118 @@ def op_summary(trace_dir: Path | None, hlo_text: str, top: int = TOP_OPS) -> dic
             "rows": [list(item) for item in hlo_op_counts(hlo_text).most_common(top)]}
 
 
+def find_trace(trace_dir: Path) -> Path | None:
+    """The newest ``perfetto_trace.json.gz`` under ``trace_dir`` (or ``trace_dir`` itself when it
+    is a file); None when there is none."""
+    trace_dir = Path(trace_dir)
+    if trace_dir.is_file():
+        return trace_dir
+    found = sorted(trace_dir.rglob(PERFETTO), key=lambda path: path.stat().st_mtime)
+    return found[-1] if found else None
+
+
+def kernel_events(trace: dict | list) -> tuple[list[dict], list[str]]:
+    """The GPU kernel events of a Chrome/perfetto trace (``traceEvents``) and the lines they come
+    from. Device processes: ``process_name`` containing ``/device:GPU``. Lines: the device threads
+    named ``Stream ...`` (CUPTI's kernel and memcpy lines); when a device process has none, its
+    threads other than ``DERIVED_LINES``. Events: ``ph == "X"`` on those lines."""
+    events = trace.get("traceEvents", []) if isinstance(trace, dict) else trace
+    processes, threads = {}, {}
+    for event in events:
+        if event.get("ph") != "M":
+            continue
+        name = (event.get("args") or {}).get("name", "")
+        if event.get("name") == "process_name":
+            processes[event.get("pid")] = str(name)
+        elif event.get("name") == "thread_name":
+            threads[(event.get("pid"), event.get("tid"))] = str(name)
+    devices = {pid for pid, name in processes.items() if "/device:GPU" in name}
+    lines = set()
+    for pid in devices:
+        own = {key: name for key, name in threads.items() if key[0] == pid}
+        streams = {key for key, name in own.items() if name.startswith("Stream")}
+        lines |= streams or {key for key, name in own.items() if not name.startswith(DERIVED_LINES)}
+    picked = [event for event in events if event.get("ph") == "X" and "dur" in event
+              and (event.get("pid"), event.get("tid")) in lines]
+    used = sorted({(event["pid"], event.get("tid")) for event in picked}, key=str)
+    return picked, [f"{processes[pid]} {threads.get((pid, tid), tid)}" for pid, tid in used]
+
+
+def _family(name: str) -> str:
+    """A kernel name without trailing instance numbers (``loop_add_fusion_12`` and
+    ``input_reduce_fusion.3`` -> their stems)."""
+    return re.sub(r"(?:[._]\d+)+$", "", name) or name
+
+
+def _table(totals: dict[str, list], total_us: float, top: int | None) -> list[list]:
+    """``[name, count, total ms, share of kernel time]`` rows, longest first."""
+    rows = sorted(totals.items(), key=lambda item: (-item[1][1], item[0]))
+    return [[name, count, us / 1e3, us / total_us if total_us else 0.0]
+            for name, (count, us) in rows[:top]]
+
+
+def summarise_kernels(events: list[dict], steps: int | None, top: int = TOP_KERNELS
+                      ) -> tuple[dict, list[list]]:
+    """The kernel summary of ``events`` (``ts``, ``dur`` in microseconds) and every kernel's
+    ``[name, count, total ms, share]`` row. Window: first kernel start to last kernel end; busy:
+    the union of the kernel intervals (streams may overlap); shares are of the summed kernel time."""
+    by_name, by_family, by_module = {}, {}, {}
+    intervals = []
+    for event in events:
+        name, start, dur = str(event.get("name", "")), float(event["ts"]), float(event["dur"])
+        intervals.append((start, start + dur))
+        module = (event.get("args") or {}).get("hlo_module")
+        for totals, key in ((by_name, name), (by_family, _family(name)), (by_module, module)):
+            if key is not None:
+                entry = totals.setdefault(str(key), [0, 0.0])
+                entry[0] += 1
+                entry[1] += dur
+    total = sum(entry[1] for entry in by_name.values())
+    busy, reach = 0.0, -math.inf
+    for start, end in sorted(intervals):
+        if end > reach:
+            busy += end - max(start, reach)
+            reach = end
+    window = (max(end for _, end in intervals) - min(start for start, _ in intervals)
+              if intervals else 0.0)
+    per_step = ({"kernels": len(events) / steps, "window_ms": window / 1e3 / steps,
+                 "kernel_ms": total / 1e3 / steps} if steps else None)
+    summary = {"events": len(events), "steps": steps, "window_ms": window / 1e3,
+               "kernel_ms": total / 1e3, "busy_ms": busy / 1e3,
+               "busy_fraction": busy / window if window else None, "idle_ms": (window - busy) / 1e3,
+               "per_step": per_step, "top": _table(by_name, total, top),
+               "families": _table(by_family, total, top),
+               "modules": _table(by_module, total, None)}
+    return summary, _table(by_name, total, None)
+
+
+def trace_kernels(trace_dir: Path, out_dir: Path, steps: int | None) -> dict:
+    """``summarise_kernels`` of the perfetto trace under ``trace_dir``, with ``source``, ``trace``,
+    ``lines`` and ``csv`` (``<out_dir>/kernels.csv``, every kernel); ``{"error": ...}`` when there is
+    no trace or it holds no GPU kernel events."""
+    path = find_trace(trace_dir)
+    if path is None:
+        return {"error": f"no {PERFETTO} under {trace_dir}"}
+    opener = gzip.open if path.suffix == ".gz" else open
+    try:
+        with opener(path, "rt") as handle:
+            events, lines = kernel_events(json.load(handle))
+    except (OSError, ValueError, AttributeError) as error:  # keep the timings of the row
+        return {"error": f"unreadable {path}: {type(error).__name__}: {error}", "trace": str(path)}
+    if not events:
+        return {"error": f"no GPU kernel events in {path}", "trace": str(path)}
+    summary, rows = summarise_kernels(events, steps)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir / KERNELS_CSV, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["name", "count", "total_ms", "share"])
+        writer.writerows(rows)
+    return {"source": "GPU kernel events of the perfetto trace (ph X on the device stream lines; "
+                      "dur in us), summed over the traced steps",
+            "trace": str(path), "lines": lines, "csv": str(out_dir / KERNELS_CSV), **summary}
+
+
 def _measure(args, source: StoreSource, specs: list, valid_ids: list[str], n_train: int,
              trace_dir: Path) -> dict:
     optimiser = train.build_optimiser(train.OptimiserConfig())
@@ -221,7 +365,8 @@ def _measure(args, source: StoreSource, specs: list, valid_ids: list[str], n_tra
     warm_end, timed_end = args.warmup_steps, args.warmup_steps + args.steps
     state, warm = _segment(step, state, source, specs[:warm_end], config)
     state, timed = _segment(step, state, source, specs[warm_end:timed_end], config)
-    trace = {"dir": str(trace_dir), "steps": args.trace_steps, "error": None}
+    trace = {"dir": str(trace_dir), "steps": args.trace_steps, "error": None,
+             "xla_flags": os.environ.get("XLA_FLAGS", "")}
     if args.trace_steps:
         shutil.rmtree(trace_dir, ignore_errors=True)
         try:  # a profiler failure (e.g. no CUPTI) must not lose the timings
@@ -254,6 +399,9 @@ def _measure(args, source: StoreSource, specs: list, valid_ids: list[str], n_tra
             "minutes_per_seed": args.epochs * seconds_per_epoch / 60,
             "wait_fraction": timed["loader"]["wait_fraction"], "loader": timed["loader"],
             "window": timed["window"], "trace": trace,
+            "kernels": (trace_kernels(trace_dir, trace_dir, args.trace_steps)
+                        if args.trace_steps and not trace["error"]
+                        else {"error": trace["error"] or "no trace (--trace-steps 0)"}),
             "op_summary": op_summary(trace_dir if args.trace_steps and not trace["error"] else None,
                                      hlo),
             "devices": [str(device) for device in jax.devices()],
@@ -395,9 +543,54 @@ def _targets(profile: dict, overhead: float | None) -> list[str]:
               for name, shown, value, met in checks]]
 
 
+def _cell(text: str, width: int = 100) -> str:
+    """A kernel name for a markdown table cell: pipes escaped, long names cut (kernels.csv has
+    them whole)."""
+    text = text.replace("|", "\\|")
+    return text if len(text) <= width else text[:width - 3] + "..."
+
+
+def kernel_lines(kernels: dict | None) -> list[str]:
+    """The measured per-kernel section of a JAX row (``trace_kernels``), or why there is none."""
+    if not kernels:
+        return ["Kernel time: not measured (no trace summary in this row; `profile.py "
+                "--trace-summary` reads an existing trace).", ""]
+    if kernels.get("error"):
+        return [f"Kernel time: no table ({kernels['error']}).", ""]
+    per = kernels.get("per_step") or {}
+    steps = kernels.get("steps")
+    lines = [f"Kernel time, measured ({kernels['source']}; `{kernels['trace']}`, lines "
+             f"{', '.join(kernels['lines'])}): {kernels['events']} kernel events over {steps} "
+             f"traced steps ({_num(per.get('kernels'))} per step); trace window "
+             f"{kernels['window_ms']:.2f} ms ({_num(per.get('window_ms'), 3)} ms per step), GPU busy "
+             f"{_pct(kernels['busy_fraction'])} of it (union of kernel intervals), idle "
+             f"{kernels['idle_ms']:.2f} ms; summed kernel time {kernels['kernel_ms']:.2f} ms "
+             f"({_num(per.get('kernel_ms'), 3)} ms per step). The traced steps block on the "
+             "parameters after each step, as the timed ones do, and XLA runs them op by op unless "
+             "`XLA_FLAGS` has `--xla_enable_command_buffers_during_profiling=true` (by default "
+             "profiling turns command buffers off), so the idle share bounds the untraced step's "
+             f"launch gaps from above. Every kernel: `{kernels['csv']}`.",
+             "", f"Top {len(kernels['top'])} kernels by summed time:", "",
+             "| kernel | count | total ms | share |", "| --- | --- | --- | --- |",
+             *[f"| {_cell(name)} | {count} | {ms:.3f} | {_pct(share)} |"
+               for name, count, ms, share in kernels["top"]], "",
+             "By family (trailing instance numbers stripped):", "",
+             "| family | count | total ms | share |", "| --- | --- | --- | --- |",
+             *[f"| {_cell(name)} | {count} | {ms:.3f} | {_pct(share)} |"
+               for name, count, ms, share in kernels["families"]], ""]
+    if kernels.get("modules"):
+        lines += ["By HLO module: " + "; ".join(f"`{name}` {count} kernels, {ms:.2f} ms "
+                                                f"({_pct(share)})"
+                                                for name, count, ms, share in kernels["modules"])
+                  + ".", ""]
+    return lines
+
+
 def render_report(profile: dict) -> str:
     """REPORT.md from a ``collect`` result: the four-row table, the on-the-fly overhead, the
-    targets, the JAX step details and op summaries, the PyTorch profiler split and the full seed."""
+    targets, where the time goes (measured busy shares and ``diagnosis``, else "pending the
+    per-kernel table"), the full seed, the JAX step details with the measured kernel tables and the
+    static HLO op counts, and the PyTorch profiler split."""
     jax_rows = profile.get("jax", {})
     loaders = profile.get("torch", {}).get("loaders", {})
     table = [("PyTorch", loaders.get("plain")), ("PyTorch workers", loaders.get("workers")),
@@ -409,17 +602,19 @@ def render_report(profile: dict) -> str:
              "estimated from the timed steps (steps per epoch x wall per step + one validation "
              "pass, start-up excluded); the full seed below is measured end to end. GPU "
              "utilisation: mean `nvidia-smi dmon` SM % over each row's timed window (5 s samples). "
-             "Padding: share of padded node rows, environment rows and AEV-list slots.", "",
+             "Padding: share of padded node rows, environment rows, AEV-list slots and GAT-list "
+             "slots (the masked share of each layer's `(ncap, kb, heads, hidden)` gather).", "",
              "| loop | s / epoch | min / seed (200 epochs) | GPU util | loader wait | node padding "
-             "| env padding | AEV-slot padding |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "| env padding | AEV-slot padding | GAT-slot padding |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for name, row in table:
         row = row or {}
         padding = row.get("padding", {})
         lines.append(f"| {name} | {_num(row.get('seconds_per_epoch'))} | "
                      f"{_num(row.get('minutes_per_seed'))} | {_pct(row.get('gpu_util'))} | "
                      f"{_pct(row.get('wait_fraction'))} | {_pct(padding.get('node'))} | "
-                     f"{_pct(padding.get('env'))} | {_pct(padding.get('aev'))} |")
+                     f"{_pct(padding.get('env'))} | {_pct(padding.get('aev'))} | "
+                     f"{_pct(padding.get('gat'))} |")
     overhead = _overhead(jax_rows)
     lines += ["", f"on-the-fly overhead: {_pct(overhead)}"
               + (f" (mean step {1e3 * jax_rows['onthefly']['step_seconds']['mean']:.2f} ms on the "
@@ -428,6 +623,17 @@ def render_report(profile: dict) -> str:
               "The precomputed A/B measures compute only: the environment arrays are still "
               "assembled and transferred in both modes, and the precomputed batches also carry "
               "the 352 AEV columns.", "", "## Targets", "", *_targets(profile, overhead), ""]
+
+    busy = [f"{LABELS[mode]}: GPU busy {_pct(kernels.get('busy_fraction'))} of the traced window, "
+            f"{_num((kernels.get('per_step') or {}).get('kernels'))} kernels per step"
+            for mode in ("onthefly", "precomputed")
+            if (kernels := (jax_rows.get(mode) or {}).get("kernels")) and not kernels.get("error")]
+    lines += ["## Where the time goes", "",
+              "Measured: the per-kernel tables of each JAX row below (time by kernel, family and "
+              "HLO module from the perfetto trace, and the GPU busy share of the traced window); "
+              "the HLO op counts are static and carry no times."
+              + (f" {'; '.join(busy)}." if busy else " No kernel table in this profile."), "",
+              f"Conclusion: {profile.get('diagnosis') or PENDING}.", ""]
 
     seed = profile.get("seed")
     if seed:
@@ -446,6 +652,7 @@ def render_report(profile: dict) -> str:
             continue
         step, cap = row["step_seconds"], row.get("capacities", {})
         trace = row.get("trace") or {}
+        fill = (row.get("padding") or {}).get("gat_fill")
         lines += [f"## {LABELS[mode]}", "",
                   f"Step (`loss_and_grad` + `apply`, `block_until_ready`): mean "
                   f"{1e3 * step['mean']:.2f} ms, p50 {1e3 * step['p50']:.2f} ms, p95 "
@@ -454,11 +661,15 @@ def render_report(profile: dict) -> str:
                   f"{_num(row.get('first_step_seconds'))} s with compilation); timed segment "
                   f"{row['segment_seconds']:.2f} s; validation pass {row['valid_seconds']:.2f} s; "
                   f"{row['steps_per_epoch']} steps per epoch; capacities ncap {cap.get('ncap')}, "
-                  f"mcap {cap.get('mcap')}, kb {cap.get('kb')}, ka {cap.get('ka')}; trace of "
+                  f"mcap {cap.get('mcap')}, kb {cap.get('kb')}, ka {cap.get('ka')}; GAT slot fill "
+                  f"{_pct(fill)} of kb on the real rows; trace of "
                   f"{row.get('trace_steps')} steps in `{trace.get('dir')}` (xplane.pb and "
-                  "perfetto_trace.json.gz)"
-                  + (f" FAILED: {trace['error']}" if trace.get("error") else "") + ".", "",
-                  f"Top ops: {row['op_summary']['source']}.", "", "| op | value |", "| --- | --- |",
+                  "perfetto_trace.json.gz"
+                  + (f"; XLA_FLAGS `{trace['xla_flags']}`" if trace.get("xla_flags") else "")
+                  + ")" + (f" FAILED: {trace['error']}" if trace.get("error") else "") + ".", "",
+                  *kernel_lines(row.get("kernels")),
+                  f"HLO op counts (static fallback, no kernel times): "
+                  f"{row['op_summary']['source']}.", "", "| op | value |", "| --- | --- |",
                   *[f"| {op} | {value:g} |" for op, value in row["op_summary"]["rows"]], ""]
 
     profiler = profile.get("torch", {}).get("profiler")
@@ -503,7 +714,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="record this timed train.py seed directory instead of profiling")
     parser.add_argument("--seed-window", type=float, nargs=2, metavar=("START", "END"),
                         help="epoch seconds before and after the --seed-run training")
+    parser.add_argument("--trace-summary", type=Path, metavar="TRACE_DIR",
+                        help="summarise an existing trace into <out>/kernels.{csv,json} (with "
+                             "--trace-steps for the per-step numbers) and stop")
     args = parser.parse_args(argv)
+    if args.trace_summary is not None and (args.store_root or args.seed_run):
+        parser.error("--trace-summary takes --out and --trace-steps only")
     if args.seed_run is not None and args.seed_window is None:
         parser.error("--seed-run needs --seed-window START END")
     if args.store_root is not None:
@@ -516,13 +732,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def print_kernels(summary: dict) -> None:
+    print("\n".join(kernel_lines(summary)), flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.trace_summary is not None:
+        summary = trace_kernels(args.trace_summary, args.out, args.trace_steps or None)
+        _write_json(args.out / KERNELS_JSON, summary)
+        print_kernels(summary)
+        return 0 if not summary.get("error") else 1
     if args.store_root is not None or args.seed_run is not None:
         row = profile_step(args) if args.store_root is not None else None
         profile = _read_json(args.out / PROFILE_JSON)  # after the measurement: rows of other runs
         if row is not None:
             profile.setdefault("jax", {})[args.aev] = row
+            print_kernels(row.get("kernels"))
         if args.seed_run is not None:
             profile["seed"] = seed_row(args.seed_run, args.seed_window)
         _write_json(args.out / PROFILE_JSON, profile)

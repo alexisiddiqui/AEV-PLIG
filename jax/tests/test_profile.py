@@ -1,5 +1,9 @@
-"""profile.py's report table and port_parity.py's join and verdict (no JAX computation)."""
+"""profile.py's report table, trace summary and padding, and port_parity.py's join and verdict (no
+JAX computation)."""
 
+import csv
+import gzip
+import json
 import math
 
 import numpy as np
@@ -16,7 +20,7 @@ def jax_row(step_mean: float, seconds_per_epoch: float, wait: float, gpu: float 
             "first_step_seconds": 21.5, "segment_seconds": 300 * step_mean, "valid_seconds": 0.4,
             "steps_per_epoch": 748, "seconds_per_epoch": seconds_per_epoch,
             "minutes_per_seed": seconds_per_epoch * 200 / 60, "wait_fraction": wait,
-            "padding": {"node": 0.18, "env": 0.305, "aev": 0.9},
+            "padding": {"node": 0.18, "env": 0.305, "aev": 0.9, "gat": 0.6, "gat_fill": 0.48},
             "capacities": {"ncap": 5120, "mcap": 14336, "kb": 7, "ka": 736, "batch": 128},
             "op_summary": {"source": "compiled HLO", "rows": [["fusion:kLoop", 120],
                                                               ["custom-call:__cublas$gemm", 60]]},
@@ -36,7 +40,7 @@ TORCH = {"loaders": {"plain": torch_loader(20.0, 0.30), "workers": torch_loader(
                                                 "optimiser": 1.0},
                       "table": "key_averages.txt"}}
 HEADER = ["loop", "s / epoch", "min / seed (200 epochs)", "GPU util", "loader wait", "node padding",
-          "env padding", "AEV-slot padding"]
+          "env padding", "AEV-slot padding", "GAT-slot padding"]
 
 
 def main_table(report: str) -> list[list[str]]:
@@ -58,26 +62,33 @@ def test_profile_report_table():
     assert [row[0] for row in rows] == ["PyTorch", "PyTorch workers", "JAX precomputed",
                                         "JAX on-the-fly"]
     by_loop = {row[0]: row[1:] for row in rows}
-    assert by_loop["PyTorch"] == ["20.0", "66.7", "45.0%", "30.0%", "n/a", "n/a", "n/a"]
-    assert by_loop["PyTorch workers"] == ["15.0", "50.0", "45.0%", "5.0%", "n/a", "n/a", "n/a"]
-    assert by_loop["JAX precomputed"] == ["7.9", "26.3", "n/a", "1.2%", "18.0%", "30.5%", "90.0%"]
-    assert by_loop["JAX on-the-fly"] == ["8.6", "28.7", "91.0%", "0.4%", "18.0%", "30.5%", "90.0%"]
+    assert by_loop["PyTorch"] == ["20.0", "66.7", "45.0%", "30.0%", "n/a", "n/a", "n/a", "n/a"]
+    assert by_loop["PyTorch workers"] == ["15.0", "50.0", "45.0%", "5.0%", "n/a", "n/a", "n/a",
+                                          "n/a"]
+    assert by_loop["JAX precomputed"] == ["7.9", "26.3", "n/a", "1.2%", "18.0%", "30.5%", "90.0%",
+                                          "60.0%"]
+    assert by_loop["JAX on-the-fly"] == ["8.6", "28.7", "91.0%", "0.4%", "18.0%", "30.5%", "90.0%",
+                                         "60.0%"]
     # mean step 11 ms on the fly against 10 ms precomputed, on the same batches
     assert "on-the-fly overhead: 10.0%" in report
     assert "compute only" in report  # the env arrays are transferred in both modes
     assert "fusion:kLoop" in report and "custom-call:__cublas$gemm" in report  # op summary
+    assert "HLO op counts" in report and "GAT slot fill 48.0%" in report
+    # No kernel table in these rows: the report says so, and the conclusion is left open.
+    assert "Kernel time: not measured" in report
+    assert "pending the per-kernel table" in report and "launch" not in report
 
     without_torch = profile.render_report(PROFILE)
     header, *rows = main_table(without_torch)
     assert [row[0] for row in rows] == ["PyTorch", "PyTorch workers", "JAX precomputed",
                                         "JAX on-the-fly"]
     for row in rows[:2]:
-        assert row[1:] == ["n/a"] * 7
+        assert row[1:] == ["n/a"] * 8
     assert rows[3][1:] == by_loop["JAX on-the-fly"]
     assert "on-the-fly overhead: 10.0%" in without_torch
 
     only_onthefly = profile.render_report({"jax": {"onthefly": PROFILE["jax"]["onthefly"]}})
-    assert main_table(only_onthefly)[3][1:] == ["n/a"] * 7
+    assert main_table(only_onthefly)[3][1:] == ["n/a"] * 8
     assert "on-the-fly overhead: n/a" in only_onthefly
 
 
@@ -178,3 +189,93 @@ def test_hlo_op_counts_command_buffer():
     # the command buffer's kernels count; the call, the fusion bodies and the reducer do not
     assert counts == {"fusion:kLoop": 2, "custom-call:__cublas$gemm": 1,
                       "fusion:kCustom:__triton_gemm": 1, "reduce": 1}
+
+
+# A perfetto trace in miniature: a host process with one event, a GPU device process with a stream
+# line (three kernel events of two kernels) and a derived "XLA Ops" line that repeats an op over a
+# kernel (counted already, so it must not be added again). ts and dur in microseconds.
+PERFETTO = {"displayTimeUnit": "ns", "traceEvents": [
+    {"ph": "M", "pid": 1, "name": "process_name", "args": {"name": "/host:CPU"}},
+    {"ph": "M", "pid": 2, "name": "process_name", "args": {"name": "/device:GPU:0"}},
+    {"ph": "M", "pid": 1, "tid": 3, "name": "thread_name", "args": {"name": "python"}},
+    {"ph": "M", "pid": 2, "tid": 7, "name": "thread_name", "args": {"name": "Stream #7(Compute)"}},
+    {"ph": "M", "pid": 2, "tid": 100, "name": "thread_name", "args": {"name": "XLA Ops"}},
+    {"ph": "X", "pid": 1, "tid": 3, "name": "PjitFunction(loss_and_grad)", "ts": 90.0, "dur": 400.0},
+    {"ph": "X", "pid": 2, "tid": 7, "name": "loop_add_fusion", "ts": 100.0, "dur": 30.0,
+     "args": {"hlo_module": "jit_loss_and_grad"}},
+    {"ph": "X", "pid": 2, "tid": 7, "name": "triton_gemm_dot_3", "ts": 140.0, "dur": 50.0,
+     "args": {"hlo_module": "jit_loss_and_grad"}},
+    {"ph": "X", "pid": 2, "tid": 7, "name": "loop_add_fusion", "ts": 200.0, "dur": 40.0,
+     "args": {"hlo_module": "jit_apply"}},
+    {"ph": "X", "pid": 2, "tid": 100, "name": "fusion.1", "ts": 100.0, "dur": 30.0},
+]}
+
+
+def test_trace_summary_sums_kernels(tmp_path):
+    trace_dir = tmp_path / "trace" / "onthefly"
+    run = trace_dir / "plugins" / "profile" / "2026_11_07"
+    run.mkdir(parents=True)
+    with gzip.open(run / "perfetto_trace.json.gz", "wt") as handle:
+        json.dump(PERFETTO, handle)
+
+    summary = profile.trace_kernels(trace_dir, trace_dir, steps=2)
+    assert summary["trace"] == str(run / "perfetto_trace.json.gz")
+    assert summary["lines"] == ["/device:GPU:0 Stream #7(Compute)"]
+    assert summary["events"] == 3 and summary["steps"] == 2
+    # window 100..240 us; kernels busy 30 + 50 + 40 = 120 us of it
+    assert summary["window_ms"] == pytest.approx(0.14)
+    assert summary["kernel_ms"] == pytest.approx(0.12)
+    assert summary["busy_ms"] == pytest.approx(0.12)
+    assert summary["busy_fraction"] == pytest.approx(120 / 140)
+    assert summary["per_step"] == pytest.approx({"kernels": 1.5, "window_ms": 0.07,
+                                                 "kernel_ms": 0.06})
+    assert [row[:2] for row in summary["top"]] == [["loop_add_fusion", 2], ["triton_gemm_dot_3", 1]]
+    np.testing.assert_allclose([row[2] for row in summary["top"]], [0.07, 0.05])
+    np.testing.assert_allclose([row[3] for row in summary["top"]], [70 / 120, 50 / 120])
+    assert [row[0] for row in summary["families"]] == ["loop_add_fusion", "triton_gemm_dot"]
+    assert [row[:2] for row in summary["modules"]] == [["jit_loss_and_grad", 2], ["jit_apply", 1]]
+
+    with open(trace_dir / "kernels.csv", newline="") as handle:
+        rows = list(csv.reader(handle))
+    assert rows[0] == ["name", "count", "total_ms", "share"]
+    assert [r[:2] for r in rows[1:]] == [["loop_add_fusion", "2"], ["triton_gemm_dot_3", "1"]]
+    assert float(rows[1][2]) == pytest.approx(0.07) and float(rows[2][3]) == pytest.approx(50 / 120)
+
+    # The report renders the measured table for a row that carries the summary.
+    row = {**jax_row(0.011, 8.6, 0.004, 0.91), "kernels": summary}
+    report = profile.render_report({"jax": {"onthefly": row}})
+    assert "| loop_add_fusion | 2 | 0.070 | 58.3% |" in report
+    assert "GPU busy 85.7%" in report and "pending the per-kernel table" in report
+    filled = profile.render_report({"jax": {"onthefly": row}, "diagnosis": "Gathers dominate."})
+    assert "Gathers dominate." in filled and "pending the per-kernel table" not in filled
+
+    # The command-line form for an existing trace writes kernels.csv and kernels.json to --out.
+    out = tmp_path / "summary"
+    assert profile.main(["--trace-summary", str(trace_dir), "--out", str(out),
+                         "--trace-steps", "2"]) == 0
+    assert (out / "kernels.csv").read_text() == (trace_dir / "kernels.csv").read_text()
+    assert json.loads((out / "kernels.json").read_text())["events"] == 3
+
+    missing = profile.trace_kernels(tmp_path / "empty", tmp_path / "empty", steps=2)
+    assert "no perfetto_trace.json.gz" in missing["error"]
+
+
+def test_padding_fractions_include_gat_slots():
+    from aevplig_jax.batching import Capacities
+
+    class Item:  # the Prepared fields padding_fractions reads
+        def __init__(self, degree, env, aev):
+            self.xyz = np.zeros((len(degree), 3))
+            self.degree = np.asarray(degree)
+            self.env_xyz = np.zeros((env, 3))
+            self.aev_count = np.asarray(aev)
+
+    prepared = {"a": Item([1, 2, 1], 10, [3, 0, 4]), "b": Item([0, 3], 6, [2, 2])}
+    cap = Capacities(ncap=8, mcap=32, kb=4, ka=8, batch=2)
+    fractions = profile.padding_fractions(prepared, [["a", "b"]], cap)
+    # 5 real rows of 8; slots used = sum(degree + 1) = 12 of 8 * 4; of the real rows' 5 * 4
+    assert fractions["node"] == pytest.approx(1 - 5 / 8)
+    assert fractions["env"] == pytest.approx(1 - 16 / 32)
+    assert fractions["aev"] == pytest.approx(1 - 11 / 64)
+    assert fractions["gat"] == pytest.approx(1 - 12 / 32)
+    assert fractions["gat_fill"] == pytest.approx(12 / 20)
