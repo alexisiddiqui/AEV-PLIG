@@ -21,7 +21,9 @@ Design: `docs/superpowers/specs/2026-11-07-aevplig-jax-rewrite-design.md`; plan:
 
   ```bash
   uv venv jax/.venv --python 3.11
-  uv pip install --python jax/.venv/bin/python jax numpy scipy zstandard rdkit pytest pandas
+  # rdkit pinned: the Isambard build env has 2024.3.3 (numpy<2); 2024.3.4 is the nearest release
+  # that takes numpy 2, and both share the GetExplicitValence() path in rdkit_features.py
+  uv pip install --python jax/.venv/bin/python jax numpy scipy zstandard rdkit==2024.3.4 pytest pandas
   # parity tests only (on Linux add --index-url https://download.pytorch.org/whl/cpu for torch)
   uv pip install --python jax/.venv/bin/python torch torch_geometric==2.5.3
   ```

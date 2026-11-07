@@ -50,20 +50,13 @@ def _one_hot(value, allowed) -> list[float]:
     return [float(value == item) for item in allowed]
 
 
-def _explicit_valence(atom: Chem.Atom) -> int:
-    # RDKit >= 2024.09 deprecates GetExplicitValence (with a logged warning) in favour of this call.
-    if hasattr(Chem, "ValenceType"):
-        return atom.GetValence(Chem.ValenceType.EXPLICIT)
-    return atom.GetExplicitValence()
-
-
 def _atom_features(atom: Chem.Atom) -> list[float]:
     neighbour_symbols = [n.GetSymbol() for n in atom.GetNeighbors()]
     return [
         *_one_hot(atom.GetSymbol(), ATOM_SYMBOLS),
         sum(s != "H" for s in neighbour_symbols),
         sum(s == "H" for s in neighbour_symbols),
-        _explicit_valence(atom),
+        atom.GetExplicitValence(),
         float(atom.GetIsAromatic()),
         float(atom.IsInRing()),
     ]
