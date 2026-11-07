@@ -1,0 +1,72 @@
+--- a/training.py
++++ b/jobs/train_seed.py
+@@ -1,3 +1,13 @@
++# PATCHED COPY of AEV-PLIG training.py (oxpig/AEV-PLIG 3ccac4b) for one-seed-per-job training on Isambard.
++# Every change is marked "# PATCH". Changes: (1) the clone's dir goes on sys.path (this file lives in jobs/, not
++# in the clone); (2) --seed_index picks ONE of the 10 seeds (-1 = all ten, the original loop); (3) --tag fixes the
++# output names to output/trained_models/<tag>_model_<model>_<dataset>_<i>.model and the y-scaler to
++# output/trained_models/<tag>_model_<model>_<dataset>.pickle (original: <timestamp>_... and the scaler in the CWD);
++# (4) the scaler is written before training (atomic rename; it is identical for every seed) so ensemble_eval.py
++# can use it while other seeds still run; (5) per-seed test predictions go to output/predictions/.
++# Run from the work dir:  python jobs/train_seed.py --seed_index=3 --tag=retrain --epochs=200 ...
++import os, sys  # PATCH (1)
++sys.path.insert(0, os.environ.get("AEVPLIG_REPO", "/projects/u6xq/hussain/opig-harness/src/AEV-PLIG-3ccac4b"))  # PATCH (1)
+ import torch
+ import random
+ import time
+@@ -81,6 +91,8 @@
+     parser.add_argument('--head', type=int, default=3)
+     parser.add_argument('--lr', type=float, default=0.00012291937615434127)
+     parser.add_argument('--activation_function', type=str, default='leaky_relu')
++    parser.add_argument('--seed_index', type=int, default=-1, help='PATCH (2): index 0-9 into the seed list; -1 = all')
++    parser.add_argument('--tag', type=str, default='retrain', help='PATCH (3): output file prefix')
+     args = parser.parse_args()
+     return args
+ 
+@@ -106,11 +118,21 @@
+     test_data = GraphDataset(root='data', dataset=dataset+'_test', y_scaler=train_data.y_scaler)
+ 
+     seeds = [100, 123, 15, 257, 2, 2012, 3752, 350, 843, 621]
+-    for i,seed in enumerate(seeds):
++    # PATCH (4): scaler first, under the fixed name, via an atomic rename (several array tasks write it)
++    os.makedirs(model_output_dir, exist_ok=True)
++    scaler_file = os.path.join(model_output_dir, args.tag + '_model_' + model_st + '_' + dataset + '.pickle')
++    tmp = scaler_file + '.tmp' + str(os.getpid())
++    with open(tmp, 'wb') as f:
++        pickle.dump(train_data.y_scaler, f)
++    os.replace(tmp, scaler_file)
++    # PATCH (2): one seed per job
++    runs = list(enumerate(seeds)) if args.seed_index < 0 else [(args.seed_index, seeds[args.seed_index])]
++    for i, seed in runs:
++        print('Seed index {} seed {}'.format(i, seed))  # PATCH (2)
+         random.seed(seed)
+         torch.manual_seed(int(seed))
+         
+-        model_file_name = timestr + '_model_' + model_st + '_' + dataset + '_' + str(i) + '.model'
++        model_file_name = args.tag + '_model_' + model_st + '_' + dataset + '_' + str(i) + '.model'  # PATCH (3)
+ 
+         train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+         valid_loader = DataLoader(valid_data, batch_size=batch_size, shuffle=False)
+@@ -140,7 +162,7 @@
+         
+         G_test, P_test = predict(model, device, test_loader, train_data.y_scaler)
+ 
+-        if(i == 0):
++        if(i == runs[0][0]):  # PATCH (2): first run, not seed index 0
+             df_test = pd.DataFrame(data=G_test, index=range(len(G_test)), columns=['truth'])
+         
+         col = 'preds_' + str(i)
+@@ -148,9 +170,10 @@
+     
+     df_test['preds'] = df_test.iloc[:,1:].mean(axis=1)
+ 
+-    scaler_file = timestr + '_model_' + model_st + '_' + dataset + '.pickle'
+-    with open(scaler_file,'wb') as f:
+-        pickle.dump(train_data.y_scaler, f)
++    # PATCH (3)/(4): scaler already written above; PATCH (5): keep this job's test predictions
++    os.makedirs(os.path.join("output", "predictions"), exist_ok=True)
++    suffix = 'all' if args.seed_index < 0 else str(args.seed_index)
++    df_test.to_csv(os.path.join("output", "predictions", args.tag + '_' + dataset + '_test_seed' + suffix + '.csv'), index=False)
+     
+     test_preds = np.array(df_test['preds'])
+     test_truth = np.array(df_test['truth'])
